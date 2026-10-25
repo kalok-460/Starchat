@@ -1,0 +1,2 @@
+cb3e8222ea411bd076ae5cc962e6a96ede0fbb991da4994f501a364bd758ea9d  StarChat-0.3.11-source.zip
+c5d140795bf7fc1316ebc01087f13464dade7b3ac3d047ba429ac4a075349f79  StarChat-0.3.11-win-x64.zip
