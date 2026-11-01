@@ -69,5 +69,4 @@ This program is a translation and chat assistant designed for **Star Citizen**. 
   
    * ---
   
-   * REFERRAL CODE
-   * STAR-PK9B-WCH3
+   * REFERRAL CODE : STAR-PK9B-WCH3
