@@ -1,0 +1,131 @@
+[
+  {
+    "name": "ctranslate2",
+    "version": "4.8.4",
+    "licenseExpression": "",
+    "licenseSummary": "MIT",
+    "licenseFiles": []
+  },
+  {
+    "name": "flatbuffers",
+    "version": "25.12.19",
+    "licenseExpression": "",
+    "licenseSummary": "Apache 2.0",
+    "licenseFiles": []
+  },
+  {
+    "name": "mpmath",
+    "version": "1.3.0",
+    "licenseExpression": "",
+    "licenseSummary": "BSD",
+    "licenseFiles": [
+      "mpmath-1.3.0.dist-info/LICENSE"
+    ]
+  },
+  {
+    "name": "numpy",
+    "version": "2.2.6",
+    "licenseExpression": "",
+    "licenseSummary": "Copyright (c) 2005-2024, NumPy Developers.\n All rights reserved.\n\n Redistribution and use in source and binary forms, with or without\n modification, are permitted provided that the following condition",
+    "licenseFiles": [
+      "numpy-2.2.6.dist-info/LICENSE.txt",
+      "numpy/_core/include/numpy/random/LICENSE.txt",
+      "numpy/ma/LICENSE",
+      "numpy/random/LICENSE.md"
+    ]
+  },
+  {
+    "name": "onnxruntime-directml",
+    "version": "1.24.4",
+    "licenseExpression": "",
+    "licenseSummary": "MIT License",
+    "licenseFiles": [
+      "onnxruntime/LICENSE",
+      "onnxruntime/ThirdPartyNotices.txt"
+    ]
+  },
+  {
+    "name": "opencv-python",
+    "version": "4.10.0.84",
+    "licenseExpression": "",
+    "licenseSummary": "Apache 2.0",
+    "licenseFiles": [
+      "cv2/LICENSE-3RD-PARTY.txt",
+      "cv2/LICENSE.txt",
+      "cv2/data/haarcascade_license_plate_rus_16stages.xml",
+      "opencv_python-4.10.0.84.dist-info/LICENSE-3RD-PARTY.txt",
+      "opencv_python-4.10.0.84.dist-info/LICENSE.txt"
+    ]
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "licenseExpression": "Apache-2.0 OR BSD-2-Clause",
+    "licenseSummary": "",
+    "licenseFiles": [
+      "packaging-26.3.dist-info/licenses/LICENSE",
+      "packaging-26.3.dist-info/licenses/LICENSE.APACHE",
+      "packaging-26.3.dist-info/licenses/LICENSE.BSD"
+    ]
+  },
+  {
+    "name": "protobuf",
+    "version": "7.36.2",
+    "licenseExpression": "",
+    "licenseSummary": "3-Clause BSD License",
+    "licenseFiles": [
+      "protobuf-7.36.2.dist-info/LICENSE"
+    ]
+  },
+  {
+    "name": "py3langid",
+    "version": "0.3.0",
+    "licenseExpression": "",
+    "licenseSummary": "BSD",
+    "licenseFiles": [
+      "py3langid-0.3.0.dist-info/LICENSE"
+    ]
+  },
+  {
+    "name": "pyclipper",
+    "version": "1.4.0",
+    "licenseExpression": "",
+    "licenseSummary": "MIT",
+    "licenseFiles": [
+      "pyclipper-1.4.0.dist-info/licenses/LICENSE"
+    ]
+  },
+  {
+    "name": "PyYAML",
+    "version": "6.0.2",
+    "licenseExpression": "",
+    "licenseSummary": "MIT",
+    "licenseFiles": [
+      "PyYAML-6.0.2.dist-info/LICENSE"
+    ]
+  },
+  {
+    "name": "sentencepiece",
+    "version": "0.2.1",
+    "licenseExpression": "",
+    "licenseSummary": "",
+    "licenseFiles": []
+  },
+  {
+    "name": "sympy",
+    "version": "1.14.0",
+    "licenseExpression": "",
+    "licenseSummary": "BSD",
+    "licenseFiles": [
+      "sympy-1.14.0.dist-info/licenses/LICENSE",
+      "sympy/parsing/latex/LICENSE.txt"
+    ]
+  },
+  {
+    "name": "windows-capture",
+    "version": "2.0.1",
+    "licenseExpression": "MIT",
+    "licenseSummary": "",
+    "licenseFiles": []
+  }
+]

@@ -1,0 +1,70 @@
+StarChat 0.3.13 - third-party components and assets
+
+StarChat-authored code: Copyright (C) 2026 StarChat contributors.
+License: GNU General Public License version 3 only (GPL-3.0-only), see LICENSE.
+Vendor libraries, model weights and branding below retain their own licenses.
+
+Microsoft WebView2 SDK 1.0.3719.77: deps/LICENSE.txt and deps/source.json.
+Microsoft Edge WebView2 Runtime is installed separately from Microsoft.
+Python 3.12.10: ocr/runtime/LICENSE.txt in the Windows package.
+ONNX Runtime DirectML 1.24.4: MIT; original LICENSE and ThirdPartyNotices.txt
+  are preserved under ocr/runtime/Lib/site-packages/onnxruntime.
+DirectML redistributable 1.15.4: Microsoft Software License Terms, preserved
+  in licenses/DirectML-LICENSE.txt (and LICENSE-CODE for sample code).
+  Original package: https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4
+PP-OCRv6_small_det_onnx / PP-OCRv6_small_rec_onnx: Apache-2.0 per official
+  model cards. Original cards/configuration and Apache license accompany models.
+Detection preprocessing/DB postprocessing and CTC decoding in onnx_engine.py
+  follow PaddleX inference processors (Copyright 2024 PaddlePaddle Authors).
+  Adapted to standalone NumPy/OpenCV/ONNX Runtime with English-only decoding.
+  Apache-2.0 terms are preserved in licenses/PaddleX-LICENSE.txt.
+windows-capture 2.0.1 and other Python dependencies: original license files
+  are preserved under ocr/runtime/Lib/site-packages, including dist-info.
+Exact Python versions: ocr/requirements.lock.txt.
+Dependency metadata summary: THIRD_PARTY_COMPONENTS.json.
+PaddlePaddle, PaddleX/PaddleOCR runtime, NVIDIA CUDA and cuDNN are not included
+  or required. The app does not distribute or launch a GPU installation script.
+
+Official sources:
+https://www.python.org/ftp/python/3.12.10/
+https://pypi.org/
+https://github.com/PaddlePaddle/PaddleOCR
+https://github.com/PaddlePaddle/PaddleX
+https://github.com/PaddlePaddle/Paddle
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+https://github.com/NiiightmareXD/windows-capture
+https://github.com/microsoft/onnxruntime
+https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html
+
+No extracted RSI JavaScript bundle, launcher SDK, login profile, cookie,
+API key, access token, game recording or personal chat history is included.
+StarChat is an independent tool, not an official RSI/CIG product.
+
+Star Citizen and Spectrum names/logos belong to their respective rights holders,
+including Cloud Imperium / Roberts Space Industries. Branding assets are not
+licensed under GPL by this project. The supplied app-icon.png is converted to
+StarChat.ico without changing the artwork; the source of that supplied image
+was not independently established by this project.
+Official Star Citizen home-logo source:
+https://cdn.robertsspaceindustries.com/orion-v3/logotypes/starcitizen_monochrome_simplified-670c152e.svg
+assets/star-citizen.svg is the original vector; star-citizen-ui.svg resolves
+currentColor for the UI and star-citizen.png is its WinForms render.
+
+Local translation:
+CTranslate2 4.8.4: MIT; original wheel license and notices are retained under
+ocr/runtime/Lib/site-packages. The CPU-only application path excludes the
+optional wheel-supplied cudnn64_9.dll. Official project:
+https://github.com/OpenNMT/CTranslate2
+NLLB-200 distilled-600M by Meta AI, CC-BY-NC-4.0 (non-commercial):
+https://huggingface.co/facebook/nllb-200-distilled-600M
+INT8 CTranslate2 conversion by osa911 (same upstream license):
+https://huggingface.co/osa911/nllb-200-distilled-600M-ct2-int8
+This is a community conversion, not an official Meta CT2 distribution.
+Weights are not bundled, are not modified by StarChat, and download only after
+consent. The original model card is preserved with installed files.
+See licenses/NLLB-CC-BY-NC-4.0.txt for the full model license.
+StarChat's GPL license applies only to StarChat-authored code, not NLLB weights.
+SentencePiece 0.2.1 and py3langid 0.3.0 retain their original notices under
+ocr/runtime/Lib/site-packages. No ONNX model conversion dependency, PyTorch,
+Transformers, Paddle, CUDA or cuDNN runtime is needed for CPU translation.
