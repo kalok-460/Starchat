@@ -24,8 +24,8 @@ This program is a translation and chat assistant designed for **Star Citizen**. 
   * **If you only use the OCR translation feature**, Spectrum login is not required. You can configure the translation engine and languages in the Settings window.
 
 ### 2. 채팅창 및 OCR 영역 설정 | Chat Window & OCR Setup
-* 앱 채팅창 활성화 단축키는 옵션에서 설정 가능합니다.
-  * The hotkey to activate the app's chat window can be customized in the Options.
+* 앱 채팅창 활성화 단축키는 옵션에서 설정 가능합니다. (기본 Shift + Enter)
+  * The hotkey to activate the app's chat window can be customized in the Options. (Shift+Enter)
 * 게임 내에서 설정창 활성화 버튼을 누른 뒤, 나타나는 투명한 창을 **인게임 채팅 영역**에 맞춰 크기와 위치를 조절하세요. 이후 자동으로 번역이 시작됩니다.
   * Press the settings activation key in-game, then resize and align the transparent overlay window over the **in-game chat area**. Translation will start automatically.
 * **스펙트럼 채팅창**과 **인게임 OCR 채팅창**은 별개로 동작하며, OCR 채팅창 영역에서만 문자 인식(OCR)을 진행합니다. 앱에서 각 채팅창의 `On/Off` 여부와 번역 사용 여부를 개별 설정할 수 있습니다.
