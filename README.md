@@ -16,7 +16,7 @@ This program is a translation and chat assistant designed for **Star Citizen**. 
 ## 🛠️ 사용 방법 | How to Use
 
 ### 1. 설치 및 실행 | Installation & Execution
-* `StarChat-0.3.11-win-x64.zip` 파일을 다운로드하여 압축을 풀고, 폴더 내의 `StarChat.exe` 파일을 실행합니다.
+* `StarChat-0.3.13-win-x64.zip` 파일을 다운로드하여 압축을 풀고, 폴더 내의 `StarChat.exe` 파일을 실행합니다.
   * Download and extract `StarChat-0.3.11-win-x64.zip`, then run `StarChat.exe` inside the folder.
 * **Spectrum** 기능을 사용하려면 로그인이 필요합니다. 로그인 시 친구 목록을 자동으로 불러옵니다.
   * Logging in is required to use **Spectrum** features. Once logged in, your friends list will be loaded automatically.
