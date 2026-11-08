@@ -5,7 +5,7 @@ import argparse, hashlib, json, re, shutil, zipfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
-COMMON=['licenses/NLLB-CC-BY-NC-4.0.txt','translation/worker.py','translation/runtime.py','translation/engine.py','translation/model.json','translation/README.md','licenses/PaddleX-LICENSE.txt','licenses/DirectML-LICENSE.txt','licenses/DirectML-LICENSE-CODE.txt','LICENSE','THIRD_PARTY_NOTICES.txt','THIRD_PARTY_COMPONENTS.json','StarChat.exe.config','Start-StarChat.cmd','bridge.js',
+COMMON=['translation-glossary.ko-en.json','TranslationGlossary.md','licenses/NLLB-CC-BY-NC-4.0.txt','translation/worker.py','translation/runtime.py','translation/engine.py','translation/model.json','translation/README.md','licenses/PaddleX-LICENSE.txt','licenses/DirectML-LICENSE.txt','licenses/DirectML-LICENSE-CODE.txt','LICENSE','THIRD_PARTY_NOTICES.txt','THIRD_PARTY_COMPONENTS.json','StarChat.exe.config','Start-StarChat.cmd','bridge.js',
  'assets/star-citizen.png','assets/star-citizen.svg','assets/star-citizen-ui.svg','assets/app-icon.png','assets/StarChat.ico','assets/ui.en.json',
  'deps/LICENSE.txt','deps/source.json','ocr/worker.py','ocr/geometry.py','ocr/ticks.py','ocr/onnx_engine.py','ocr/download_models.py','ocr/models-onnx.json','ocr/requirements.txt','ocr/requirements.lock.txt','ocr/setup.ps1']
 SOURCE=['AssemblyInfo.cs','Program.cs','I18n.cs','Core.cs','Native.cs','OcrClient.cs','Spectrum.cs','Translation.cs','LocalTranslation.cs','LocalModelDialog.cs','Overlay.cs','Visuals.cs','SettingsForm.cs','MainForm.cs',
@@ -98,6 +98,10 @@ def main():
 - `StarChat-{args.version}-source.zip`: 같은 버전의 소스 패키지입니다. Release에 함께 올려 주세요.
 - `SHA256SUMS.txt`: 두 ZIP의 SHA-256 검증값입니다.
 - `RELEASE_MANIFEST.json`: 파일별 목록·해시와 제외 항목 확인 결과입니다.
+
+이 폴더만 검토해서 업로드하세요. 원래 개발 폴더를 통째로 올리지 마세요. 설정, 로그인 프로필, API 키, OCR 대화 기록, 참고 영상과 테스트 출력은 포함하지 않았습니다. ONNX Runtime·DirectML과 OCR 모델을 포함합니다. 로컬 번역 모델 약 601MiB는 최초 실행 또는 설정에서 동의하면 별도로 설치합니다. CUDA·cuDNN·Paddle 및 GPU 설치 스크립트는 포함하지 않습니다. 지원되는 GPU를 자동 선택하고 사용할 수 없으면 CPU로 전환합니다.
+
+GitHub 저장소에는 source 폴더의 **내용**을 넣고, Releases에서 버전 v{args.version}을 만들어 소스 ZIP과 Windows ZIP, SHA256SUMS.txt를 함께 첨부하세요. 이 작업에서 GitHub 업로드는 수행하지 않았습니다. 파일별 2 GiB 제한: https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases
 
 English: upload the contents of source/ to your repository. Attach both matching ZIPs and SHA256SUMS.txt to release v{args.version}. The Windows archive includes ONNX Runtime DirectML, CPU fallback and small ONNX models. The optional quantized local translation model downloads only after user consent (about 601 MiB). No Paddle, CUDA, cuDNN or additional GPU installer is required. No private developer settings, sessions, keys, chat logs, recordings or test artifacts are included. Nothing has been uploaded automatically.
 '''

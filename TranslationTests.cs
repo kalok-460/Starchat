@@ -2,6 +2,8 @@
 // Copyright (C) 2026 StarChat contributors
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -37,6 +39,18 @@ public static class TranslationTests
         catch(Exception ex){Console.Error.WriteLine("FAIL "+ex.GetType().Name+": "+ex.Message);Console.Error.WriteLine(ex.StackTrace);Environment.ExitCode=1;}
     }
     private static void MainCore(string[] args) {
+        if(args.Length==1&&args[0]=="--hy-mt2-check") {
+            using(var t=new Translator()) {
+                var o=new TranslationOptions{Provider="Ollama",Model="hy-mt2:1.8b"};
+                string korean=t.Translate("Hello, where is the space station?","en","ko",o,false).GetAwaiter().GetResult();
+                Check(korean.Contains("우주")&&korean.Contains("정거장"),"Installed HY-MT2 shorthand resolves and translates English to Korean");
+                string english=t.Translate("우주 정거장은 어디에 있나요?","auto","en",o,false).GetAwaiter().GetResult();
+                Check(english.ToLowerInvariant().Contains("space station"),"HY-MT2 cached full model name translates Korean to English");
+                string longText=t.Translate("The landing pads are full. Please wait outside the station. I will bring medical supplies when my ship is repaired.","en","ko",o,false).GetAwaiter().GetResult();
+                Check(longText.Contains("착륙")&&longText.Contains("기다")&&(longText.Contains("의료")||longText.Contains("의약")),"HY-MT2 translates a multi-sentence chat through the app client");
+                Console.WriteLine("PASS live installed HY-MT2: "+checks+" checks; "+korean+" / "+english+" / "+longText);
+            }return;
+        }
         if(args.Length==1&&args[0]=="--local-check"){
             if(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("STARCHAT_LOCAL_MODEL_ROOT")))throw new Exception("Use an isolated installed-model fixture");
             using(var t=new Translator(new Fake{Respond=r=>{throw new Exception("Local translation must not call HTTP");}})){
@@ -46,6 +60,8 @@ public static class TranslationTests
                 string english=t.Translate("우주 정거장은 어디에 있나요?","auto","en",options,false).GetAwaiter().GetResult();
                 Check(english.Contains("space station"),"Real local Korean to English");
                 Check(t.LocalBackend=="CTranslate2 CPU INT8","Real local worker uses CPU CTranslate2 INT8");
+                string edged=t.Translate("lol Hello, where is the space station? o7","en","ko",options,false).GetAwaiter().GetResult();
+                Check(edged=="ㅋㅋ "+korean+" 충성(o7)","Real local worker shares body result and restores current edge expressions");
                 Console.WriteLine("PASS C# local worker integration: "+checks+" checks, "+watch.ElapsedMilliseconds+" ms, backend="+t.LocalBackend);
             }
             using(var client=new LocalTranslationClient()){
@@ -69,10 +85,161 @@ public static class TranslationTests
             }
             return;
         }
-        Run().GetAwaiter().GetResult(); Console.WriteLine("PASS " + checks + " translation checks; mocked HTTP only.");
+        GlossaryTests().GetAwaiter().GetResult();Run().GetAwaiter().GetResult(); Console.WriteLine("PASS " + checks + " translation checks; mocked HTTP only.");
     }
+    private static async Task GlossaryTests()
+    {
+        string path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"translation-glossary.ko-en.json");
+        var doc=new JavaScriptSerializer().Deserialize<GameGlossary.Document>(File.ReadAllText(path));
+        var glossary=new GameGlossary(path);
+        Check(doc.entries.Length>0&&doc.entries.All(e=>e.korean.Length>0),"Editable glossary has entries and aliases");
+        foreach(var entry in doc.entries)foreach(var alias in entry.korean){
+            Check(glossary.Apply(alias,"ko","en")==entry.english,"Exact alias: "+alias);
+            Check(glossary.Apply(alias+"에서 만나요.","auto","en")==entry.english+"에서 만나요.","Attached Korean particle: "+alias);
+        }
+        Check(glossary.Apply("이지스 다이나믹스 어벤저 타이탄 테라핀 데이마르 나인테일스","auto","en")=="Aegis Dynamics Avenger Titan Terrapin Daymar Nine Tails","Longest alternatives win across categories");
+        Check(glossary.Apply("몰랐어. 테라스에서 기다려. 시안성도 확인해.","auto","en")=="몰랐어. 테라스에서 기다려. 시안성도 확인해.","Ordinary word fragments never replaced");
+        Check(glossary.Apply("(아르고 몰)을 타고 에버러스   하버로 가자!","ko","en")=="(Argo MOLE)을 타고 Everus Harbor로 가자!","Punctuation and variable whitespace");
+        Check(glossary.Apply("몰 몰에서 토끼 몰이 토끼몰이","ko","en")=="몰 몰에서 토끼 몰이 토끼몰이","Removed one-character alias stays unchanged");
+        Check(glossary.Apply("엔빌 앤빌 아르고 몰","ko","en")=="Anvil Anvil Argo MOLE","User-maintained aliases remain available");
+        Check(glossary.Apply("산토캬이 시안 마텍","ko","en")=="San'tok.yāi Xi'an microTech","Exact spelling and capitalization retained");
+        Check(glossary.Apply("테라핀","ko","ja")=="테라핀"&&glossary.Apply("테라핀","en","ko")=="테라핀","Other translation directions unchanged");
+        string temp=Path.Combine(Path.GetTempPath(),"starchat-glossary-"+Guid.NewGuid().ToString("N")+".json");
+        try{
+            File.WriteAllText(temp,"{\"version\":1,\"entries\":[{\"english\":\"First\",\"korean\":[\"시험(함선)+\"]}]}");
+            var reload=new GameGlossary(temp);Check(reload.Apply("시험(함선)+","ko","en")=="First","Aliases are escaped, not executable regex");
+            File.WriteAllText(temp,"{\"version\":1,\"entries\":[{\"english\":\"SecondName\",\"korean\":[\"시험(함선)+\"]}]}");
+            Check(reload.Apply("시험(함선)+","ko","en")=="SecondName","JSON edits reload without restart");
+            File.WriteAllText(temp,"{broken");await Error(()=>Task.FromResult(reload.Apply("함선","ko","en")),"대응표");
+        }finally{File.Delete(temp);}
+        var responses=new Dictionary<string,string>{
+            {"Google","[[[\"result\"]]]"},{"GoogleCloud","{\"data\":{\"translations\":[{\"translatedText\":\"result\"}]}}"},
+            {"GPT","{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"result\"}]}]}"},
+            {"Gemini","{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"result\"}]}}]}"},
+            {"DeepL","{\"translations\":[{\"text\":\"result\"}]}"},{"Papago","{\"message\":{\"result\":{\"translatedText\":\"result\"}}}"},
+            {"Ollama","{\"message\":{\"content\":\"result\"},\"done\":true}"}};
+        foreach(var response in responses){
+            var fake=new Fake{Respond=async request=>{
+                string sent=Uri.UnescapeDataString(request.Method==HttpMethod.Get?request.RequestUri.Query:await request.Content.ReadAsStringAsync()).Replace('+',' ');
+                Check(sent.Contains("Avenger Titan")&&sent.Contains("Everus Harbor")&&!sent.Contains("어벤저"),response.Key+" receives glossary-prepared text");return Response(response.Value);
+            }};
+            using(var translator=new Translator(fake))await translator.Translate("어벤저 타이탄으로 에버러스 하버에 가자","auto","en",new TranslationOptions{Provider=response.Key=="GoogleCloud"?"Google":response.Key,ApiKey=response.Key=="Google"?"":"SECRET",ClientId="id",Model="test"});
+        }
+        int revision=0;var refresh=new Fake{Respond=r=>Task.FromResult(Response("{\"message\":{\"content\":\"version "+(++revision)+"\"},\"done\":true}"))};
+        using(var translator=new Translator(refresh)){
+            var options=new TranslationOptions{Provider="Ollama",Model="test"};
+            Check(await translator.Translate("Meet at the station.","en","ko",options)=="version 1","Initial cached result");
+            Check(await translator.Translate("Meet at the station!","en","ko",options)=="version 1"&&refresh.Count==1,"Normal requests still share fuzzy cache");
+            Check(await translator.Translate("Meet at the station.","en","ko",options,false,true)=="version 2"&&refresh.Count==2,"Manual request bypasses exact and fuzzy cache");
+            Check(await translator.Translate("Meet at the station.","en","ko",options)=="version 2"&&refresh.Count==2,"Later requests see refreshed result");
+        }
+    }
+    private static async Task GameChatRules()
+    {
+        var direct=new Dictionary<string,string> {
+            {"lol","ㅋㅋ"},{"lamo","ㅋㅋㅋㅋ"},{"rofl","ㅋㅋㅋㅋ"},{"gg","수고하셨습니다"},
+            {"gf","좋은 승부였습니다"},{"o7","충성(o7)"},{"ty","감사합니다"},{"np","천만에요"}
+        };
+        foreach(string provider in new[]{"Local","Google","GPT","Gemini","DeepL","Papago","Ollama"}) {
+            var f=new Fake{Respond=r=>{throw new Exception("Standalone chat expressions must not call a provider");}};
+            using(var t=new Translator(f)) {
+                var o=new TranslationOptions{Provider=provider}; // No model, credentials or running local server required.
+                foreach(var pair in direct) {
+                    Check(await t.Translate("  "+pair.Key.ToUpperInvariant()+"  ","auto","ko",o)==pair.Value,provider+" standalone "+pair.Key);
+                    Check(await t.Translate(pair.Key+"!","en","ko",o,false)==pair.Value+"!",provider+" standalone punctuation "+pair.Key);
+                }
+                Check(await t.Translate("lol ty o7","en","ko",o)=="ㅋㅋ 감사합니다 충성(o7)",provider+" expressions around direct-only body");
+                Check(await t.Translate("lol rofl o7","en","ko",o)=="ㅋㅋ ㅋㅋㅋㅋ 충성(o7)",provider+" edge-only message needs no inference");
+                Check(f.Count==0,provider+" zero calls for fixed expressions");
+            }
+        }
+        var responseBodies=new Dictionary<string,string> {
+            {"Google","[[[\"착륙장에서 만나요\"]]]"},
+            {"GoogleCloud","{\"data\":{\"translations\":[{\"translatedText\":\"착륙장에서 만나요\"}]}}"},
+            {"GPT","{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"착륙장에서 만나요\"}]}]}"},
+            {"Gemini","{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"착륙장에서 만나요\"}]}}]}"},
+            {"DeepL","{\"translations\":[{\"text\":\"착륙장에서 만나요\"}]}"},
+            {"Papago","{\"message\":{\"result\":{\"translatedText\":\"착륙장에서 만나요\"}}}"},
+            {"Ollama","{\"message\":{\"content\":\"착륙장에서 만나요\"},\"done\":true}"}
+        };
+        foreach(var response in responseBodies) {
+            var f=new Fake{Respond=async request=>{
+                string sent=Uri.UnescapeDataString(request.Method==HttpMethod.Get?request.RequestUri.Query:await request.Content.ReadAsStringAsync()).Replace('+',' ');
+                Check(sent.Contains("Meet me at the landing pad"),response.Key+" gets sentence body");
+                Check(!sent.Contains("lol")&&!sent.Contains("lamo")&&!sent.Contains("rofl")&&!sent.Contains("o7"),response.Key+" never gets removed edge tokens");
+                return Response(response.Value);
+            }};
+            using(var t=new Translator(f)) {
+                var o=new TranslationOptions{Provider=response.Key=="GoogleCloud"?"Google":response.Key,ApiKey=response.Key=="Google"?"":"SECRET",ClientId="id",Model="test"};
+                var messages=new[]{"lol Meet me at the landing pad o7","rofl Meet me at the landing pad lamo","Meet me at the landing pad","o7 lol Meet me at the landing pad rofl lol"};
+                var expected=new[]{"ㅋㅋ 착륙장에서 만나요 충성(o7)","ㅋㅋㅋㅋ 착륙장에서 만나요 ㅋㅋㅋㅋ","착륙장에서 만나요","충성(o7) ㅋㅋ 착륙장에서 만나요 ㅋㅋㅋㅋ ㅋㅋ"};
+                var tasks=new List<Task<string>>();
+                foreach(string message in messages) tasks.Add(t.Translate(message,"en","ko",o));
+                string[] results=await Task.WhenAll(tasks);
+                for(int i=0;i<results.Length;i++)Check(results[i]==expected[i],response.Key+" restores each request's own edges");
+                Check(f.Count==1,response.Key+" concurrent body cache does not leak edge expressions");
+                Check(await t.Translate("LOL, Meet me at the landing pad ROFL!","en","ko",o,false)=="ㅋㅋ, 착륙장에서 만나요 ㅋㅋㅋㅋ!",response.Key+" punctuation, case and exact cache");
+                Check(f.Count==1,response.Key+" exact body cache reused");
+            }
+        }
+        foreach(string text in new[]{"lollipop","pilot_lol","rofling","bo7","hello lol friend","LOLcat","lol's ship","@o7","https://example/o7"}) {
+            var plan=GameChatText.Prepare(text,"en","ko");
+            Check(plan.Body==text&&plan.Direct==null&&plan.Restore("translated")=="translated","No substring or middle replacement: "+text);
+        }
+        foreach(var pair in new[]{new[]{"en","ja"},new[]{"auto","en"},new[]{"fr","ko"},new[]{"ko","ko"}}) {
+            var plan=GameChatText.Prepare("lol ty o7",pair[0],pair[1]);
+            Check(plan.Body=="lol ty o7"&&plan.Direct==null&&plan.Restore("translated")=="translated","No Korean insertion in other translation directions");
+        }
+        var noNetwork=new Fake{Respond=r=>{throw new Exception("Unexpected HTTP");}};
+        using(var t=new Translator(noNetwork)) {
+            Check(await t.Translate("np",null,null,new TranslationOptions{Provider="Local",SourceLanguage="auto",TargetLanguage="ko-KR"})=="천만에요","Option language fallback and Korean locale");
+            t.Dispose();await Error(()=>t.Translate("lol","en","ko",new TranslationOptions()),"종료");
+        }
+    }
+
+    private static async Task OllamaModelResolution()
+    {
+        int chatCalls=0,listCalls=0;
+        var f=new Fake{Respond=async request=>{
+            if(request.RequestUri.AbsolutePath=="/api/tags") {
+                listCalls++;Check(request.Method==HttpMethod.Get,"Ollama model resolution only lists installed local models");
+                return Response("{\"models\":[{\"name\":\"maternion/hy-mt2:1.8b\"},{\"name\":\"gemma4:latest\"}]}");
+            }
+            Check(request.RequestUri.AbsolutePath=="/api/chat","Alias resolution never pulls or installs models");
+            var body=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(await request.Content.ReadAsStringAsync());
+            chatCalls++;
+            if(chatCalls==1){Check((string)body["model"]=="hy-mt2:1.8b","Try explicitly requested name first");return new HttpResponseMessage(HttpStatusCode.NotFound);}
+            Check((string)body["model"]=="maternion/hy-mt2:1.8b","Use unique installed namespace and exact tag");
+            return Response("{\"message\":{\"content\":\"정상 번역\"},\"done\":true,\"done_reason\":\"stop\"}");
+        }};
+        using(var t=new Translator(f)) {
+            var o=new TranslationOptions{Provider="Ollama",Model="hy-mt2:1.8b"};
+            Check(await t.Translate("Hello pilot","en","ko",o,false)=="정상 번역","Namespaced model resolves after a definite 404");
+            Check(await t.Translate("Where is the station?","en","ko",o,false)=="정상 번역","Next sentence uses cached installed model name");
+            Check(chatCalls==3&&listCalls==1,"One list and one bounded retry; subsequent calls use resolved name");
+            Check(o.Model=="hy-mt2:1.8b","Resolution does not rewrite caller settings");
+        }
+        Check(Translator.ResolveInstalledOllamaModel("hy-mt2:1.8b",new[]{"hy-mt2:1.8b","other/hy-mt2:1.8b"})=="hy-mt2:1.8b","Exact installed name wins");
+        Check(Translator.ResolveInstalledOllamaModel("hy-mt2:1.8b",new[]{"maternion/hy-mt2:7b"})==null,"Different model size tag is never substituted");
+        Check(Translator.ResolveInstalledOllamaModel("explicit/hy-mt2:1.8b",new[]{"other/hy-mt2:1.8b"})==null,"Explicit namespace never silently changes");
+        Check(Translator.ResolveInstalledOllamaModel("test",new[]{"vendor/test:latest"})=="vendor/test:latest","Default latest tag preserves Ollama semantics");
+        f=new Fake{Respond=request=>Task.FromResult(request.RequestUri.AbsolutePath=="/api/tags"?
+            Response("{\"models\":[{\"name\":\"one/hy-mt2:1.8b\"},{\"name\":\"two/hy-mt2:1.8b\"}]}"):new HttpResponseMessage(HttpStatusCode.NotFound))};
+        using(var t=new Translator(f)) {
+            await Error(()=>t.Translate("Hello pilot","en","ko",new TranslationOptions{Provider="Ollama",Model="hy-mt2:1.8b"},false),"여러 개");
+            Check(f.Count==2,"Ambiguous short name sends no retry to either model");
+        }
+        f=new Fake{Respond=request=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest))};
+        using(var t=new Translator(f)) {
+            await Error(()=>t.Translate("Hello pilot","en","ko",new TranslationOptions{Provider="Ollama",Model="hy-mt2:1.8b"},false),"HTTP 400");
+            Check(f.Count==1,"Non-404 model failures are never retried under another name");
+        }
+    }
+
     private static async Task Run()
     {
+        await GameChatRules();
+        await OllamaModelResolution();
         string oldRoot=Environment.GetEnvironmentVariable("STARCHAT_LOCAL_MODEL_ROOT");
         try{Environment.SetEnvironmentVariable("STARCHAT_LOCAL_MODEL_ROOT",System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"test-output","missing-local-model"));
             var noNetwork=new Fake{Respond=request=>{throw new Exception("No HTTP fallback or download without consent");}};

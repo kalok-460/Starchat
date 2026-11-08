@@ -12,7 +12,8 @@ window.SpectrumProbe = (() => {
   const readWaiters = new Map(), readAcks = new Map(), historyLimits = new Map();
   // Vite changes the content hash for every web deployment. Resolve only the
   // official Main module already referenced by this page, then check its API.
-  // Verified store export: pr as ay in 7.160.0 (Main.uX02y0Mw.js) and the prior build.
+  // Export aliases also change: pr as ay in 7.160.0, fr as aK in 7.163.0.
+  // Resolve the already-created store by its passive state contract, not its alias.
   const OFFICIAL_MAIN = /^https:\/\/static\.robertsspaceindustries\.com\/spectrum\/static\/Main\.[A-Za-z0-9_-]{6,64}\.js$/;
   let eventSocket = null, eventHandler = null, eventStarting = null, eventGeneration = 0;
   const receivedInvites = new Map();
@@ -90,6 +91,28 @@ window.SpectrumProbe = (() => {
     if (!eventPageAllowed()) return;
     try { window.chrome?.webview?.postMessage({ spectrumEvent: value }); } catch { /* Navigation/host shutdown. */ }
   }
+  function officialPageStore(module) {
+    // Only inspect own data properties of the imported official module. Do not
+    // invoke exported factories/hooks, getters, authentication, or new clients.
+    const descriptors = Object.values(Object.getOwnPropertyDescriptors(module));
+    if (descriptors.length > 2048) throw error('EVENTS_UNSUPPORTED_CONTRACT');
+    const seen = new Set(), candidates = [];
+    for (const descriptor of descriptors) {
+      const store = descriptor.value;
+      if (!store || !['object','function'].includes(typeof store) || seen.has(store)) continue;
+      seen.add(store);
+      const getState = Object.getOwnPropertyDescriptor(store, 'getState')?.value;
+      if (typeof getState !== 'function') continue;
+      let state;
+      try { state = getState.call(store); } catch { continue; }
+      if (!state || typeof state !== 'object' ||
+          !Object.prototype.hasOwnProperty.call(state, 'identityInfos') ||
+          !Object.prototype.hasOwnProperty.call(state, 'spectrumWsClient')) continue;
+      candidates.push(store);
+    }
+    if (candidates.length !== 1) throw error(candidates.length ? 'EVENTS_AMBIGUOUS_CONTRACT' : 'EVENTS_UNSUPPORTED_CONTRACT');
+    return candidates[0];
+  }
   function subscribeKnownChats() {
     if (!eventSocket) return;
     const existing = eventSocket.getSessionSubscriptions();
@@ -148,15 +171,14 @@ window.SpectrumProbe = (() => {
     const generation = ++eventGeneration;
     eventStarting = (async () => {
       const moduleUrl = officialMainModule();
-      // Import reuses the page's ES-module instance. No bundle fetching/eval,
-      // arbitrary export discovery, second socket, or authentication is created.
+      // Import reuses the page's ES-module instance. The bounded resolver below
+      // only reads store state; no second socket or authentication is created.
       let module;
       try { module = await import(moduleUrl); }
       catch { throw error('EVENTS_MODULE_UNAVAILABLE'); }
       if (generation !== eventGeneration) throw error('EVENTS_START_CANCELLED');
       checkEventSession();
-      const store = module.ay;
-      if (typeof store?.getState !== 'function') throw error('EVENTS_UNSUPPORTED_CONTRACT');
+      const store = officialPageStore(module);
       const state = store.getState();
       const pageMemberId = eventId(state?.identityInfos?.memberId);
       if (!pageMemberId) throw error('EVENTS_PAGE_NOT_READY');

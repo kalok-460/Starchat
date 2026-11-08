@@ -1,6 +1,6 @@
 ﻿# SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 StarChat contributors
-param([switch]$RenderSettings)
+param([switch]$RenderSettings,[switch]$SearchUi,[switch]$ChatUpdates,[switch]$BatchInput)
 $ErrorActionPreference = 'Stop'
 $uiTestRoot = $PSScriptRoot
 $uiCompiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -9,8 +9,11 @@ $uiSources = @('I18n.cs','Core.cs','Native.cs','OcrClient.cs','Spectrum.cs','Tra
 if ($LASTEXITCODE -ne 0) { throw "UI test compilation failed: $LASTEXITCODE" }
 $uiStart=@{FilePath=(Join-Path $uiTestRoot 'UiTests.exe');WorkingDirectory=$uiTestRoot;WindowStyle='Hidden';PassThru=$true}
 if($RenderSettings){$uiStart.ArgumentList='--render-settings'}
+if($SearchUi){$uiStart.ArgumentList='--search-ui'}
+if($ChatUpdates){$uiStart.ArgumentList='--chat-updates'}
+if($BatchInput){$uiStart.ArgumentList='--batch-input'}
 $uiProcess = Start-Process @uiStart
 if (-not $uiProcess.WaitForExit(30000)) { $uiProcess.Kill(); throw 'UI tests exceeded 30 seconds; stopped this test process.' }
-$uiResult = Join-Path $uiTestRoot $(if($RenderSettings){'test-output\ui-render-tests.json'}else{'test-output\ui-tests.json'})
+$uiResult = Join-Path $uiTestRoot $(if($BatchInput){'test-output\ui-batch-input-tests.json'}elseif($ChatUpdates){'test-output\ui-chat-update-tests.json'}elseif($SearchUi){'test-output\ui-search-tests.json'}elseif($RenderSettings){'test-output\ui-render-tests.json'}else{'test-output\ui-tests.json'})
 Get-Content -LiteralPath $uiResult -Raw
 if ($uiProcess.ExitCode -ne 0) { throw "UI tests failed: $($uiProcess.ExitCode)" }

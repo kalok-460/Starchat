@@ -287,16 +287,59 @@ test('Main resolver rejects foreign, redirected-looking and ambiguous module ref
  }
 });
 
-test('a changed export, missing identity or incomplete official socket fails before attaching',async()=>{
+test('missing state contract, unready identity or incomplete official socket fails before attaching',async()=>{
  const noSend=new OfficialSocket();noSend.sendEvent=undefined;
  for(const [module,expected] of [
   [{different:{getState:()=>({})}},'EVENTS_UNSUPPORTED_CONTRACT'],
-  [{ay:{getState:()=>({spectrumWsClient:new OfficialSocket()})}},'EVENTS_PAGE_NOT_READY'],
+  [{ay:{getState:()=>({identityInfos:undefined,spectrumWsClient:new OfficialSocket()})}},'EVENTS_PAGE_NOT_READY'],
   [{ay:{getState:()=>({identityInfos:{memberId:12},spectrumWsClient:noSend})}},'EVENTS_PAGE_NOT_READY']
  ]){
   const h=harness([identityResponse()],{__mockImport:async()=>module});await h.call('identity');
   assert.equal((await h.call('startEvents')).code,expected);assert.equal(h.posts.length,0);
  }
+});
+
+test('store resolution survives the 7.163.0 alias change and later minifier names',async()=>{
+ for(const alias of ['aK','future_store_104']) {
+  const socket=new OfficialSocket();
+  const store=()=>{throw Error('Store hook must not execute');};
+  store.getState=()=>({identityInfos:{memberId:12},spectrumWsClient:socket});
+  const module={ay:()=>{throw Error('Old alias is now an unrelated factory');},[alias]:store,aliasOfSameStore:store,
+   unrelated:{getState:()=>({otherState:true})},throws:{getState:()=>{throw Error('unavailable unrelated store');}}};
+  Object.defineProperty(module,'unsafeModuleGetter',{enumerable:true,get(){throw Error('Do not invoke export getters');}});
+  const value={};Object.defineProperty(value,'getState',{get(){throw Error('Do not invoke property getters');}});module.unsafeValue=value;
+  const h=harness([identityResponse()],{officialSocket:socket,__mockImport:async()=>module});
+  await h.call('identity');const result=await h.call('startEvents');
+  assert.equal(result.data.active,true);assert.equal(socket.handlers.size,1);assert.equal(h.calls.length,1);
+  await h.call('stopEvents');assert.equal(socket.handlers.size,0);
+ }
+});
+
+test('ambiguous or foreign-account store candidates cannot attach a socket',async()=>{
+ const a=new OfficialSocket(),b=new OfficialSocket();
+ const first={getState:()=>({identityInfos:{memberId:12},spectrumWsClient:a})};
+ const second={getState:()=>({identityInfos:{memberId:12},spectrumWsClient:b})};
+ const ambiguous=harness([identityResponse()],{__mockImport:async()=>({aK:first,bZ:second})});
+ await ambiguous.call('identity');assert.equal((await ambiguous.call('startEvents')).code,'EVENTS_AMBIGUOUS_CONTRACT');
+ assert.equal(a.handlers.size+b.handlers.size,0);
+ const foreign=harness([identityResponse()],{__mockImport:async()=>({aK:{getState:()=>({identityInfos:{memberId:99},spectrumWsClient:a})}})});
+ await foreign.call('identity');assert.equal((await foreign.call('startEvents')).code,'EVENTS_ACCOUNT_CHANGED');
+ assert.equal(a.handlers.size,0);
+});
+
+test('read synchronization uses renamed store and still waits for exact server read receipt',async()=>{
+ const socket=new OfficialSocket();let state={identityInfos:{memberId:12},spectrumWsClient:socket};
+ const store={getState:()=>state};
+ const h=await readHarness({officialSocket:socket,__mockImport:async()=>({aK:store,ay:()=>{throw Error('Old alias must not execute');}}),
+  document:{cookie:'Rsi-Token=private',querySelectorAll:()=>[{href:'https://static.robertsspaceindustries.com/spectrum/static/Main.CG5fm92h.js'}]}});
+ let done=false;const wait=h.call('markRead',{lobbyId:42,messageId:'900719925474099312'}).then(r=>{done=true;return r;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(done,false);
+ assert.deepEqual(socket.sent,[{type:'message_lobby.read',lobby_id:42,message_id:'900719925474099312'}]);
+ socket.emit([{type:'message_lobby.read.update',lobbyId:42,messageId:'900719925474099312'}]);
+ assert.equal((await wait).data.acknowledged,true);
+ state={identityInfos:{memberId:99},spectrumWsClient:socket};h.posts.length=0;
+ socket.emit([{type:'message_lobby.read.update',lobbyId:42,messageId:'900719925474099313'}]);
+ assert.equal(socket.handlers.size,0);assert.equal(h.posts.length,0);
 });
 
 test('read synchronization works with the newly deployed module and still requires server confirmation',async()=>{

@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -27,10 +28,111 @@ namespace StarChat
         public TranslationException(string message) : base(message) { }
     }
 
+    // One escaped alternation prevents a short alias from consuming a longer name.
+    // A Korean particle may follow a name; arbitrary word fragments must not match.
+    internal sealed class GameGlossary
+    {
+        internal sealed class Document { public int version {get;set;} public Entry[] entries {get;set;} }
+        internal sealed class Entry { public string english {get;set;} public string[] korean {get;set;} }
+        readonly string path;
+        readonly object gate=new object();
+        DateTime stamp;long length=-1;Regex pattern;
+        Dictionary<string,string> names;
+        public GameGlossary(string filename){path=filename;}
+        static string Canonical(string value){return Regex.Replace(value.Normalize(NormalizationForm.FormC),@"\s+"," ").Trim();}
+        static Regex Compile(Document document,out Dictionary<string,string> lookup)
+        {
+            if(document==null||document.version!=1||document.entries==null||document.entries.Length>10000)throw new FormatException();
+            lookup=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var entry in document.entries){
+                if(entry==null||String.IsNullOrWhiteSpace(entry.english)||entry.english.Length>200||entry.english.IndexOfAny(new[]{'\r','\n'})>=0||entry.korean==null||entry.korean.Length==0)throw new FormatException();
+                foreach(string alias in entry.korean){
+                    if(String.IsNullOrWhiteSpace(alias)||alias.Length>200)throw new FormatException();
+                    string key=Canonical(alias),old;
+                    if(lookup.TryGetValue(key,out old)&&old!=entry.english.Trim())throw new FormatException();
+                    lookup[key]=entry.english.Trim();
+                }
+            }
+            if(lookup.Count==0)return null;
+            string terms=String.Join("|",lookup.Keys.OrderByDescending(x=>x.Length).ThenBy(x=>x,StringComparer.Ordinal).Select(x=>String.Join(@"\s+",x.Split(' ').Select(Regex.Escape))));
+            const string word=@"[\p{L}\p{M}\p{N}_]";
+            const string particles="으로부터|에서부터|으로는|으로도|에서는|에서도|에게는|에게도|한테는|한테도|까지는|부터는|이라는|이라고|이라면|이라도|이랑|이나|이며|이고|으로|에서|에게|한테|처럼|보다|까지|부터|하고|랑|은|는|이|가|을|를|의|에|로|과|와|도|만";
+            return new Regex("(?<!"+word+")(?:"+terms+")(?=(?:(?:"+particles+"))?(?!"+word+"))",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(250));
+        }
+        public string Apply(string text,string source,string target)
+        {
+            if(!(target=="en"||target.StartsWith("en-"))||!(source=="auto"||source=="ko"||source.StartsWith("ko-"))||!Regex.IsMatch(text,"[가-힣ㄱ-ㅎㅏ-ㅣ]"))return text;
+            lock(gate){
+                try{
+                    var info=new FileInfo(path);
+                    if(!info.Exists)throw new IOException();
+                    if(info.Length>2*1024*1024)throw new FormatException();
+                    if(names==null||stamp!=info.LastWriteTimeUtc||length!=info.Length){
+                        var doc=new JavaScriptSerializer().Deserialize<Document>(File.ReadAllText(path,Encoding.UTF8));
+                        Dictionary<string,string> updated;var regex=Compile(doc,out updated);
+                        pattern=regex;names=updated;stamp=info.LastWriteTimeUtc;length=info.Length;
+                    }
+                    return pattern==null?text:pattern.Replace(text,m=>names[Canonical(m.Value)]);
+                }catch(Exception ex){
+                    if(!(ex is IOException||ex is UnauthorizedAccessException||ex is ArgumentException||ex is FormatException||ex is InvalidOperationException||ex is RegexMatchTimeoutException))throw;
+                    throw new TranslationException(L.T("번역 대응표를 읽을 수 없습니다. translation-glossary.ko-en.json의 형식과 중복 항목을 확인하세요."));
+                }
+            }
+        }
+    }
+
+    // Shared by every provider. Korean chat idioms are restored outside the
+    // translation/fuzzy caches, so each message keeps its own edge expressions.
+    internal sealed class GameChatText
+    {
+        private static readonly Dictionary<string,string> Korean = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase) {
+            {"lol","ㅋㅋ"}, {"lamo","ㅋㅋㅋㅋ"}, {"rofl","ㅋㅋㅋㅋ"},
+            {"gg","수고하셨습니다"}, {"gf","좋은 승부였습니다"},
+            {"o7","충성(o7)"}, {"ty","감사합니다"}, {"np","천만에요"}
+        };
+        private const RegexOptions MatchOptions = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        private static readonly Regex Standalone = new Regex(@"\A(?<token>lol|lamo|rofl|gg|gf|o7|ty|np)(?<punct>[.!?,;:]*)\z", MatchOptions);
+        private static readonly Regex Leading = new Regex(@"\A(?<token>lol|lamo|rofl|o7)(?![\p{L}\p{M}\p{N}_'’/\-])(?<punct>[.!?,;:]*)\s*", MatchOptions);
+        private static readonly Regex Trailing = new Regex(@"(?<![\p{L}\p{M}\p{N}_'’/@#\-])(?<token>lol|lamo|rofl|o7)(?<punct>[.!?,;:]*)\z", MatchOptions);
+        private readonly List<string> prefix = new List<string>(), suffix = new List<string>();
+        public string Body, Direct;
+
+        public static GameChatText Prepare(string text, string source, string target)
+        {
+            var result = new GameChatText {Body=text};
+            // These are explicitly Korean replacements, not outgoing English
+            // translations. Other target languages retain normal translation.
+            if (!(target == "ko" || target.StartsWith("ko-",StringComparison.Ordinal)) ||
+                !(source == "auto" || source == "en" || source.StartsWith("en-",StringComparison.Ordinal))) return result;
+            string body=text.Trim();
+            Match match;
+            while ((match=Leading.Match(body)).Success) {
+                result.prefix.Add(Korean[match.Groups["token"].Value]+match.Groups["punct"].Value);
+                body=body.Substring(match.Length).TrimStart();
+            }
+            while ((match=Trailing.Match(body)).Success) {
+                result.suffix.Insert(0,Korean[match.Groups["token"].Value]+match.Groups["punct"].Value);
+                body=body.Substring(0,match.Index).TrimEnd();
+            }
+            match=Standalone.Match(body);
+            if (match.Success) result.Direct=Korean[match.Groups["token"].Value]+match.Groups["punct"].Value;
+            else if (result.prefix.Count+result.suffix.Count>0 && !body.Any(Char.IsLetterOrDigit)) result.Direct=body;
+            if (result.Direct!=null || result.prefix.Count+result.suffix.Count>0) result.Body=body;
+            return result;
+        }
+
+        public string Restore(string translated)
+        {
+            if (prefix.Count+suffix.Count==0) return translated;
+            return String.Join(" ",prefix.Concat(new[]{translated.Trim()}).Concat(suffix).Where(s=>s.Length>0));
+        }
+    }
+
     // 인증 정보, 원문, 서버 오류 본문을 오류 메시지나 디스크에 기록하지 않습니다.
     public class Translator : IDisposable
     {
         private readonly HttpClient client;
+        private readonly GameGlossary glossary=new GameGlossary(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"translation-glossary.ko-en.json"));
         private readonly LocalTranslationClient local=new LocalTranslationClient();
         public string LocalBackend { get { return local.Backend; } }
         private readonly SemaphoreSlim slots = new SemaphoreSlim(2, 2);
@@ -42,6 +144,7 @@ namespace StarChat
         private readonly Queue<string> cacheOrder = new Queue<string>();
         private readonly Dictionary<string, DateTime> blockedUntil = new Dictionary<string, DateTime>();
         private readonly Dictionary<string, int> throttleCount = new Dictionary<string, int>();
+        private readonly Dictionary<string, string> ollamaAliases = new Dictionary<string, string>();
         private int pending;
         private bool disposed;
         private const int CacheLimit = 512;
@@ -65,11 +168,31 @@ namespace StarChat
 
         // 영문 원문을 NFKC/소문자/공백 정규화 후 비교한다. 1 - 편집거리 / 긴 문자열 길이.
         // 성공한 결과와 진행 중인 요청 모두 공유하여 OCR 오타가 동시에 도착해도 한 번만 요청한다.
-        public async Task<string> Translate(string text, string source, string target, TranslationOptions options, bool fuzzy = true)
+        public async Task<string> Translate(string text, string source, string target, TranslationOptions options, bool fuzzy = true, bool forceRefresh = false)
         {
             if (options == null) throw new TranslationException(L.T("번역 설정을 확인하세요."));
             if (String.IsNullOrWhiteSpace(text)) return "";
             if (text.Length > 10000) throw new TranslationException(L.T("번역할 문장이 너무 깁니다. 10,000자 이하로 나누세요."));
+            lock (gate) { if (disposed) throw new TranslationException(L.T("번역 서비스가 종료되었습니다.")); }
+            source=(String.IsNullOrWhiteSpace(source)?options.SourceLanguage:source) ?? "auto";
+            target=(String.IsNullOrWhiteSpace(target)?options.TargetLanguage:target) ?? "ko";
+            source=source.Trim().ToLowerInvariant();target=target.Trim().ToLowerInvariant();
+            if (!Regex.IsMatch(source, "^[a-z]{2,5}(-[a-z]{2,4})?$") || !Regex.IsMatch(target, "^[a-z]{2,3}(-[a-z]{2,4})?$"))
+                throw new TranslationException(L.T("번역 언어 설정을 확인하세요."));
+            string prepared=glossary.Apply(text,source,target);
+            if(prepared!=text)fuzzy=false;
+            var chat=GameChatText.Prepare(prepared,source,target);
+            if (chat.Direct!=null) return chat.Restore(chat.Direct);
+            if(forceRefresh){
+                string fresh=await TranslateExact(chat.Body,source,target,options,true).ConfigureAwait(false);
+                lock(gate){memos.Clear();memoRevision++;}
+                return chat.Restore(fresh);
+            }
+            return chat.Restore(await TranslateCached(chat.Body,source,target,options,fuzzy).ConfigureAwait(false));
+        }
+
+        private async Task<string> TranslateCached(string text, string source, string target, TranslationOptions options, bool fuzzy)
+        {
             if (!fuzzy || !Regex.IsMatch(text, "[A-Za-z]") || text.Any(c => c > 127 && Char.IsLetter(c)))
                 return await TranslateExact(text, source, target, options).ConfigureAwait(false);
             string normalized = NormalizeEnglish(text);
@@ -127,7 +250,7 @@ namespace StarChat
             }
             return previous[b.Length]<=limit;
         }
-        private async Task<string> TranslateExact(string text, string source, string target, TranslationOptions options)
+        private async Task<string> TranslateExact(string text, string source, string target, TranslationOptions options, bool forceRefresh=false)
         {
             if (options == null) throw new TranslationException(L.T("번역 설정을 확인하세요."));
             if (String.IsNullOrWhiteSpace(text)) return "";
@@ -160,7 +283,7 @@ namespace StarChat
             {
                 if (disposed) throw new TranslationException(L.T("번역 서비스가 종료되었습니다."));
                 string hit;
-                if (cache.TryGetValue(key, out hit)) return hit;
+                if (!forceRefresh && cache.TryGetValue(key, out hit)) return hit;
                 if (pending >= 32) throw new TranslationException(L.T("번역 대기열이 가득 찼습니다. 잠시 뒤 다시 시도하세요."));
                 pending++;
             }
@@ -178,7 +301,7 @@ namespace StarChat
                 lock (gate)
                 {
                     string hit;
-                    if (cache.TryGetValue(key, out hit)) return hit;
+                    if (!forceRefresh && cache.TryGetValue(key, out hit)) return hit;
                     DateTime until;
                     if (blockedUntil.TryGetValue(provider, out until) && until > DateTime.UtcNow)
                         throw new TranslationException((provider=="google"?L.T("Google 무키 웹 번역 요청 한도로 서버에서 제한되었습니다. "):L.T("번역 서비스 요청 한도에 도달했습니다. ")) + Math.Ceiling((until - DateTime.UtcNow).TotalSeconds) + L.T("초 동안 요청을 중단합니다. Ollama 등 다른 엔진을 선택할 수 있습니다."));
@@ -188,11 +311,10 @@ namespace StarChat
                 timeout.CancelAfter(TimeSpan.FromSeconds(provider=="ollama"||provider=="local"?180:35));
                 if(provider=="local"){
                     string translated=await local.Translate(text,source,target,timeout.Token).ConfigureAwait(false);
-                    lock(gate){if(!disposed&&!cache.ContainsKey(key)){while(cache.Count>=CacheLimit)cache.Remove(cacheOrder.Dequeue());cache.Add(key,translated);cacheOrder.Enqueue(key);}}
+                    Remember(key,translated);
                     return translated;
                 }
-                using (var request = BuildRequest(provider, text, source, target, o))
-                using (var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false))
+                using (var response = await SendRequest(provider, text, source, target, o, timeout.Token).ConfigureAwait(false))
                 {
                     if ((int)response.StatusCode == 429)
                     {
@@ -237,12 +359,7 @@ namespace StarChat
                             throttleCount.Remove(provider);
                             blockedUntil.Remove(provider);
                         }
-                        if (!disposed && !cache.ContainsKey(key))
-                        {
-                            while (cache.Count >= CacheLimit) cache.Remove(cacheOrder.Dequeue());
-                            cache.Add(key, result);
-                            cacheOrder.Enqueue(key);
-                        }
+                        Remember(key,result);
                     }
                     return result;
                 }
@@ -257,6 +374,63 @@ namespace StarChat
                 if (googleEntered) googleWebSlot.Release();
                 lock (gate) pending--;
             }
+        }
+
+        private void Remember(string key,string result)
+        {
+            lock(gate){
+                if(disposed)return;
+                if(!cache.ContainsKey(key)){while(cache.Count>=CacheLimit)cache.Remove(cacheOrder.Dequeue());cacheOrder.Enqueue(key);}
+                cache[key]=result;
+            }
+        }
+        private async Task<HttpResponseMessage> SendRequest(string provider,string text,string source,string target,TranslationOptions options,CancellationToken token)
+        {
+            if(provider!="ollama") {
+                using(var request=BuildRequest(provider,text,source,target,options))
+                    return await client.SendAsync(request,token).ConfigureAwait(false);
+            }
+            string requested=options.Model,aliasKey=OllamaEndpoint(options.OllamaUrl).AbsoluteUri+"\n"+requested,resolved;
+            lock(gate){if(ollamaAliases.TryGetValue(aliasKey,out resolved))options.Model=resolved;}
+            HttpResponseMessage response;
+            using(var request=BuildRequest(provider,text,source,target,options))
+                response=await client.SendAsync(request,token).ConfigureAwait(false);
+            // A 404 cannot have generated a translation. Resolve a shorthand only
+            // against models already installed on this same local server, then
+            // retry once. Never pull a model or substitute another tagged model.
+            if(response.StatusCode!=HttpStatusCode.NotFound || requested.Contains("/"))return response;
+            lock(gate)ollamaAliases.Remove(aliasKey);
+            try {
+                string[] installed;
+                using(var request=new HttpRequestMessage(HttpMethod.Get,new Uri(OllamaEndpoint(options.OllamaUrl),"api/tags")))
+                using(var listing=await client.SendAsync(request,token).ConfigureAwait(false)) {
+                    if(!listing.IsSuccessStatusCode)return response;
+                    object data;
+                    try{data=new JavaScriptSerializer().DeserializeObject(await listing.Content.ReadAsStringAsync().ConfigureAwait(false));}
+                    catch(ArgumentException){return response;}
+                    installed=Items(Get(data,"models")).Cast<object>().Select(m=>Str(Get(m,"name"))).ToArray();
+                }
+                resolved=ResolveInstalledOllamaModel(requested,installed);
+                if(String.IsNullOrEmpty(resolved) || resolved==options.Model)return response;
+                options.Model=resolved;
+                response.Dispose();response=null;
+                using(var request=BuildRequest(provider,text,source,target,options))
+                    response=await client.SendAsync(request,token).ConfigureAwait(false);
+                if(response.IsSuccessStatusCode)lock(gate){if(!disposed){if(ollamaAliases.Count>=32)ollamaAliases.Clear();ollamaAliases[aliasKey]=resolved;}}
+                return response;
+            }catch{if(response!=null)response.Dispose();throw;}
+        }
+
+        internal static string ResolveInstalledOllamaModel(string requested,IEnumerable<string> installed)
+        {
+            string wanted=requested.Contains(":")?requested:requested+":latest";
+            var names=installed.Where(n=>Regex.IsMatch(n??"","^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")).Distinct(StringComparer.Ordinal).ToArray();
+            string exact=names.FirstOrDefault(n=>String.Equals(n,wanted,StringComparison.Ordinal));
+            if(exact!=null)return exact;
+            if(requested.Contains("/"))return null;
+            var matches=names.Where(n=>String.Equals(n.Substring(n.LastIndexOf('/')+1),wanted,StringComparison.OrdinalIgnoreCase)).ToArray();
+            if(matches.Length>1)throw new TranslationException(L.T("같은 이름의 Ollama 모델이 여러 개입니다. 설정의 설치 모델 버튼에서 전체 모델 이름을 선택하세요."));
+            return matches.Length==1?matches[0]:null;
         }
 
         private static HttpRequestMessage BuildRequest(string provider, string text, string source, string target, TranslationOptions o)
@@ -395,7 +569,7 @@ namespace StarChat
             {
                 if (disposed) return;
                 disposed = true;
-                cache.Clear(); cacheOrder.Clear(); memos.Clear(); blockedUntil.Clear(); throttleCount.Clear();
+                cache.Clear(); cacheOrder.Clear(); memos.Clear(); blockedUntil.Clear(); throttleCount.Clear();ollamaAliases.Clear();
             }
             lifetime.Cancel();
             local.Dispose();

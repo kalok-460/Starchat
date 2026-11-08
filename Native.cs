@@ -56,13 +56,14 @@ static class Native {
         finally{RestoreDC(hdc,saved);Marshal.FreeHGlobal(memory);graphics.ReleaseHdc(hdc);}
     }
     public static Process Game() { return Process.GetProcessesByName("StarCitizen").FirstOrDefault(p=>p.MainWindowHandle!=IntPtr.Zero); }
-    [StructLayout(LayoutKind.Sequential)] struct Keyboard { public ushort vk,scan; public uint flags,time; public UIntPtr extra; }
-    [StructLayout(LayoutKind.Explicit,Size=32)] struct Union { [FieldOffset(0)] public Keyboard keyboard; }
-    [StructLayout(LayoutKind.Sequential)] struct Input { public uint type; public Union data; }
+    [StructLayout(LayoutKind.Sequential)] internal struct Keyboard { public ushort vk,scan; public uint flags,time; public UIntPtr extra; }
+    [StructLayout(LayoutKind.Explicit,Size=32)] internal struct Union { [FieldOffset(0)] public Keyboard keyboard; }
+    [StructLayout(LayoutKind.Sequential)] internal struct Input { public uint type; public Union data; }
     [DllImport("user32.dll",SetLastError=true)] static extern uint SendInput(uint count,Input[] input,int size);
     [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
     [DllImport("user32.dll")] internal static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] static extern uint MapVirtualKeyEx(uint code,uint type,IntPtr layout);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode,ExactSpelling=true)] static extern short VkKeyScanExW(char character,IntPtr layout);
     static Input Key(ushort vk,ushort scan,uint flags) { return new Input {type=1,data=new Union{keyboard=new Keyboard{vk=vk,scan=scan,flags=flags}}}; }
     static void Inject(params Input[] input) { if(SendInput((uint)input.Length,input,Marshal.SizeOf(typeof(Input)))!=input.Length) throw new InvalidOperationException(L.T("게임에 키 입력을 전달하지 못했습니다. 게임과 앱의 실행 권한을 확인하세요. 자동 재전송하지 않습니다.")); }
     static void Tap(Keys combo) {
@@ -88,21 +89,47 @@ static class Native {
         finally{Inject(up);} // Release our keys even if focus changes mid-stroke.
         EnsureGame(game);
     }
-    static async Task GamePaste(IntPtr game,IntPtr layout){
-        // 참고 SC-KoChat 1.7.3의 _do_paste/_one과 같이 네 스캔 코드 이벤트를
-        // 하나씩 보내고 각각 35ms 기다린다. 게임이 Ctrl을 먼저 읽은 뒤 V를 받아야 한다.
-        bool controlDown=false,vDown=false;
-        try{
-            EnsureGame(game);Inject(ScanKey(0x11,false,layout));controlDown=true;await Task.Delay(35);
-            EnsureGame(game);Inject(ScanKey(0x56,false,layout));vDown=true;await Task.Delay(35);
-            Inject(ScanKey(0x56,true,layout));vDown=false;await Task.Delay(35);
-            Inject(ScanKey(0x11,true,layout));controlDown=false;await Task.Delay(35);
-        }finally{
-            // 중간에 포커스가 바뀌거나 오류가 나도 주입한 키가 눌린 채로 남지 않게 놓는다.
-            try{if(vDown)Inject(ScanKey(0x56,true,layout));}
-            finally{if(controlDown)Inject(ScanKey(0x11,true,layout));}
+    internal static void ValidateGameText(string text){
+        if(text==null||text.Length>2000||text.Any(char.IsControl))throw new InvalidOperationException(L.T("게임 전송은 제어 문자 없이 2,000자 이하의 한 줄만 지원합니다."));
+    }
+    internal static Input[] BuildTextBatch(string text,IntPtr layout,bool capsLock){
+        ValidateGameText(text);
+        var events=new List<Input>(text.Length*2+2);bool shiftDown=false;
+        foreach(char c in text){
+            int mapped=c>=' '&&c<='~'?VkKeyScanExW(c,layout):-1;
+            ushort vk=(ushort)(mapped&255);int mods=(mapped>>8)&255;
+            // AltGr/Ctrl/Alt must not become game shortcuts. Characters without a
+            // plain keyboard mapping retain their Unicode value in the SAME batch.
+            bool scan=mapped!=-1&&(mods&~1)==0&&MapVirtualKeyEx(vk,4,layout)!=0;
+            bool shifted=scan&&(mods&1)!=0;
+            if(scan&&capsLock&&((c>='A'&&c<='Z')||(c>='a'&&c<='z')))shifted=!shifted;
+            if(shiftDown!=shifted){events.Add(ScanKey(0x10,!shifted,layout));shiftDown=shifted;}
+            if(scan){events.Add(ScanKey(vk,false,layout));events.Add(ScanKey(vk,true,layout));}
+            else{events.Add(Key(0,c,4));events.Add(Key(0,c,6));}
         }
-        EnsureGame(game);
+        if(shiftDown)events.Add(ScanKey(0x10,true,layout));
+        return events.ToArray();
+    }
+    static bool SameInputKey(Input a,Input b){
+        return a.data.keyboard.vk==b.data.keyboard.vk&&a.data.keyboard.scan==b.data.keyboard.scan&&(a.data.keyboard.flags&~2u)==(b.data.keyboard.flags&~2u);
+    }
+    internal static void SendTextBatch(Input[] batch,Func<Input[],uint> send){
+        if(batch.Length==0)return;
+        uint accepted=send(batch); // One SendInput call for the complete message, without character delays.
+        if(accepted==batch.Length)return;
+        // Never retry a partially accepted message. Release only keys pressed by
+        // its accepted prefix so an interrupted batch cannot leave Shift held.
+        var held=new List<Input>();
+        for(int i=0;i<Math.Min((long)accepted,batch.Length);i++){
+            var item=batch[i];int index=held.FindIndex(k=>SameInputKey(k,item));
+            if((item.data.keyboard.flags&2)!=0){if(index>=0)held.RemoveAt(index);}
+            else if(index<0)held.Add(item);
+        }
+        if(held.Count>0){
+            held.Reverse();var releases=held.Select(k=>Key(k.data.keyboard.vk,k.data.keyboard.scan,k.data.keyboard.flags|2)).ToArray();
+            try{send(releases);}catch{} // Best-effort key-up only; no duplicate text or submit.
+        }
+        throw new InvalidOperationException(L.T("게임에 키 입력을 전달하지 못했습니다. 게임과 앱의 실행 권한을 확인하세요. 자동 재전송하지 않습니다."));
     }
     static void FocusGame(IntPtr game){
         SetForegroundWindow(game);if(GetForegroundWindow()==game)return;
@@ -110,52 +137,13 @@ static class Native {
         bool attached=target!=thread&&AttachThreadInput(thread,target,true);
         try{SetForegroundWindow(game);}finally{if(attached)AttachThreadInput(thread,target,false);}
     }
-    // Materialize data before replacing it; OLE clipboard proxies are lazy and
-    // can lose their source after EmptyClipboard. Keep rich formats, not just text.
-    // A sequence guard prevents restoring over something the user copied meanwhile.
-    internal sealed class PasteClipboard {
-        DataObject previous;
-        uint sequence;
-        public bool IsCurrent {get{return GetClipboardSequenceNumber()==sequence;}}
-        internal static DataObject Snapshot(){
-            var source=Clipboard.GetDataObject();var copy=new DataObject();if(source==null)return copy;
-            foreach(string format in source.GetFormats(false)){
-                object value=source.GetData(format,false);
-                if(value==null)continue;
-                var image=value as Image;var stream=value as System.IO.MemoryStream;
-                if(image!=null)value=image.Clone();else if(stream!=null)value=new System.IO.MemoryStream(stream.ToArray());
-                else if(value is ICloneable)value=((ICloneable)value).Clone();
-                copy.SetData(format,false,value);
-            }
-            if(source.GetFormats(false).Length>0&&copy.GetFormats(false).Length==0)throw new InvalidOperationException(L.T("현재 클립보드를 보존할 수 없어 전송을 중단했습니다."));
-            return copy;
-        }
-        public static async Task<PasteClipboard> Create(string text){
-            var lease=new PasteClipboard();
-            for(int i=0;;i++){
-                try{
-                    lease.previous=Snapshot();
-                    Clipboard.SetText(text,TextDataFormat.UnicodeText);
-                    lease.sequence=GetClipboardSequenceNumber();return lease;
-                }catch(Exception ex){lease.Release();if(!(ex is ExternalException))throw;if(i==4)throw new InvalidOperationException(L.T("클립보드를 사용할 수 없습니다. 잠시 후 다시 전송하세요."));}
-                await Task.Delay(60);
-            }
-        }
-        void Release(){if(previous!=null)foreach(var item in previous.GetFormats(false).Select(f=>previous.GetData(f,false)).OfType<IDisposable>().Distinct())item.Dispose();previous=null;}
-        public async Task<string> Restore(){
-            try{
-                for(int i=0;i<5;i++){
-                    if(!IsCurrent)return null;
-                    try{if(previous.GetFormats(false).Length==0)Clipboard.Clear();else Clipboard.SetDataObject(previous,true,0,0);return null;}catch(ExternalException){}
-                    await Task.Delay(60);
-                }
-                return L.T("이전 클립보드를 복원하지 못했습니다. 클립보드에는 전송 문장이 남아 있습니다.");
-            }catch(Exception){return L.T("이전 클립보드 형식을 복원하지 못했습니다.");}finally{Release();}
-        }
+    internal static async Task EnterGameChat(Keys openKey,bool submit,Func<Keys,Task> tap,Func<Task> enterText,Func<int,Task> delay){
+        await tap(openKey);await delay(300);await enterText();await delay(250);
+        if(submit)await tap(Keys.Enter);
     }
-    public static async Task<string> SendGame(IntPtr game,Keys openKey,string text,Keys releaseKey=Keys.Enter) {
+    public static async Task<string> SendGame(IntPtr game,Keys openKey,string text,Keys releaseKey=Keys.Enter,bool submit=true) {
         if(string.IsNullOrWhiteSpace(text))return null;
-        if(text.Length>2000||text.Contains("\r")||text.Contains("\n"))throw new InvalidOperationException(L.T("게임 전송은 2,000자 이하의 한 줄만 지원합니다."));
+        ValidateGameText(text);
         if(!IsWindow(game))throw new InvalidOperationException(L.T("게임 창을 찾지 못했습니다."));
         // 사용자가 누르고 있는 조합 키가 주입 문자열을 게임 단축키로 바꾸지 않도록 키가 올라올 때까지 기다린다.
         int trigger=(int)(releaseKey&Keys.KeyCode);
@@ -163,16 +151,13 @@ static class Native {
         if((GetAsyncKeyState(0x10)&0x8000)!=0||(GetAsyncKeyState(0x11)&0x8000)!=0||(GetAsyncKeyState(0x12)&0x8000)!=0||(GetAsyncKeyState(0x0D)&0x8000)!=0||(GetAsyncKeyState(trigger)&0x8000)!=0)throw new InvalidOperationException(L.T("입력 키를 놓은 뒤 다시 전송하세요."));
         FocusGame(game);await Task.Delay(150);EnsureGame(game);
         uint owner;IntPtr layout=GetKeyboardLayout(GetWindowThreadProcessId(game,out owner));
-        var clipboard=await PasteClipboard.Create(text);Exception error=null;
-        try{
-            await GameTap(game,openKey,layout,60);await Task.Delay(300);
-            if(!clipboard.IsCurrent)throw new InvalidOperationException(L.T("클립보드 내용이 바뀌어 전송을 중단했습니다. 초안은 보존됩니다."));
-            await GamePaste(game,layout);
-            await Task.Delay(250);await GameTap(game,Keys.Enter,layout,60);
-        }catch(Exception ex){error=ex;}
-        string warning=await clipboard.Restore();
-        if(error!=null)System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
-        return warning;
+        var batch=BuildTextBatch(text,layout,(GetKeyState(0x14)&1)!=0);
+        await EnterGameChat(openKey,submit,k=>GameTap(game,k,layout,60),()=>{
+            EnsureGame(game);
+            SendTextBatch(batch,events=>SendInput((uint)events.Length,events,Marshal.SizeOf(typeof(Input))));
+            EnsureGame(game);return Task.FromResult(0);
+        },ms=>Task.Delay(ms));
+        return null;
     }
 }
 sealed class ActivationHook : NativeWindow, IDisposable {

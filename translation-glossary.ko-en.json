@@ -1,0 +1,1282 @@
+{
+  "version": 1,
+  "description": "한국어→영어 번역 전 치환. korean에 별칭을 추가하고 english에 정확한 영문을 적으세요. 앱이 긴 이름부터 정규식을 구성합니다.",
+  "entries": [
+    {
+      "english": "Grenade Launcher",
+      "korean": [
+        "유탄발사기"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Attrition",
+      "korean": [
+        "어트리션"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Omnisky",
+      "korean": [
+        "옴니스키"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Repeater",
+      "korean": [
+        "리피터"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Cannon",
+      "korean": [
+        "캐논"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Ballistic",
+      "korean": [
+        "발리스틱"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Gatling",
+      "korean": [
+        "개틀링"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Distortion",
+      "korean": [
+        "디스토션"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Karna",
+      "korean": [
+        "카르나"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Gallant",
+      "korean": [
+        "갈란트",
+        "갤런트",
+        "겔런트"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Scourge",
+      "korean": [
+        "스커지"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Railgun",
+      "korean": [
+        "레일건"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Animus",
+      "korean": [
+        "애니머스",
+        "에니머스",
+        "아니무스"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Demeco",
+      "korean": [
+        "데메코"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Custodian",
+      "korean": [
+        "커스토디안"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Lumin",
+      "korean": [
+        "루민"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Arrowhead",
+      "korean": [
+        "애로우헤드",
+        "에로우헤드"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Scalpel",
+      "korean": [
+        "스칼펠",
+        "스칼팰"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Atzkav",
+      "korean": [
+        "아츠카브"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Ravager",
+      "korean": [
+        "라바저",
+        "레버저"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Coda",
+      "korean": [
+        "코다"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Salvo",
+      "korean": [
+        "살보"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Arclight",
+      "korean": [
+        "아크라이트"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Yubarev",
+      "korean": [
+        "유바레프"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Multi-Tool",
+      "korean": [
+        "멀티툴"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Tractor Beam",
+      "korean": [
+        "트랙터빔"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "MaxLift",
+      "korean": [
+        "맥스리프트"
+      ],
+      "category": "무기류"
+    },
+    {
+      "english": "Undersuit",
+      "korean": [
+        "언더수트",
+        "언더슈트"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Armor",
+      "korean": [
+        "아머"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Heavy Armor",
+      "korean": [
+        "중갑"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Morozov-SH",
+      "korean": [
+        "모로조프"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Citadel",
+      "korean": [
+        "시타델"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Defiance",
+      "korean": [
+        "디파이언스"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Artimex",
+      "korean": [
+        "아티멕스",
+        "아티맥스"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Inquisitor",
+      "korean": [
+        "인퀴지터"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "MacFlex",
+      "korean": [
+        "맥플렉스"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Arden-SL",
+      "korean": [
+        "아든",
+        "아르덴",
+        "아덴"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "TrueDef-Pro",
+      "korean": [
+        "트루데프"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Pembroke",
+      "korean": [
+        "펨브로크",
+        "팸브로크"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Novikov",
+      "korean": [
+        "노비코프"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Rucksack",
+      "korean": [
+        "럭색"
+      ],
+      "category": "방어구"
+    },
+    {
+      "english": "Aegis Dynamics",
+      "korean": [
+        "이지스 다이나믹스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Aegis",
+      "korean": [
+        "이지스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Gladius",
+      "korean": [
+        "글라디우스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Avenger Titan",
+      "korean": [
+        "어벤저 타이탄"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Avenger",
+      "korean": [
+        "어벤저"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Eclipse",
+      "korean": [
+        "이클립스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Sabre",
+      "korean": [
+        "세이버"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Vanguard",
+      "korean": [
+        "뱅가드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Redeemer",
+      "korean": [
+        "리디머"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Retaliator",
+      "korean": [
+        "리텔리에이터",
+        "리탈리에이터"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Reclaimer",
+      "korean": [
+        "리클레이머"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hammerhead",
+      "korean": [
+        "해머헤드",
+        "헤머헤드",
+        "해머해드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Idris",
+      "korean": [
+        "이드리스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Javelin",
+      "korean": [
+        "자벨린",
+        "제블린"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Anvil",
+      "korean": [
+        "앤빌",
+        "엔빌"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Arrow",
+      "korean": [
+        "애로우",
+        "에로우"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hornet",
+      "korean": [
+        "호넷"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Lightning",
+      "korean": [
+        "라이트닝"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Pisces",
+      "korean": [
+        "파이시스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Carrack",
+      "korean": [
+        "캐럭"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Valkyrie",
+      "korean": [
+        "발키리"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Terrapin",
+      "korean": [
+        "테라핀"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hurricane",
+      "korean": [
+        "허리케인"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Paladin",
+      "korean": [
+        "팔라딘"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Asgard",
+      "korean": [
+        "아스가르드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Mercury Star Runner",
+      "korean": [
+        "머큐리 스타 러너"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Mercury",
+      "korean": [
+        "머큐리"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hercules Starlifter",
+      "korean": [
+        "허큘리스 스타리프터"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hercules",
+      "korean": [
+        "허큘리스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Ares Star Fighter",
+      "korean": [
+        "아레스 스타파이터"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Ares",
+      "korean": [
+        "아레스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Ion",
+      "korean": [
+        "이온"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Inferno",
+      "korean": [
+        "인페르노"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Spirit",
+      "korean": [
+        "스피릿"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Intrepid",
+      "korean": [
+        "인트레피드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Drake",
+      "korean": [
+        "드레이크"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Cutlass Black",
+      "korean": [
+        "커틀러스 블랙"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Cutlass",
+      "korean": [
+        "커틀러스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Corsair",
+      "korean": [
+        "커세어"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Caterpillar",
+      "korean": [
+        "캐터필러"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Vulture",
+      "korean": [
+        "벌처"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Cutter",
+      "korean": [
+        "커터"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Buccaneer",
+      "korean": [
+        "버캐니어",
+        "버케니어"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Kraken",
+      "korean": [
+        "크라켄"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Ironclad",
+      "korean": [
+        "아이언클래드",
+        "아이언클라드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Golem",
+      "korean": [
+        "골렘",
+        "골램"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Aurora",
+      "korean": [
+        "오로라"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Constellation",
+      "korean": [
+        "컨스텔레이션",
+        "콘스탈레이션",
+        "컨스탈레이션",
+        "별자리"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Connie",
+      "korean": [
+        "코니"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Polaris",
+      "korean": [
+        "폴라리스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Perseus",
+      "korean": [
+        "페르세우스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Zeus",
+      "korean": [
+        "제우스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Scorpius",
+      "korean": [
+        "스콜피우스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Mantis",
+      "korean": [
+        "맨티스",
+        "만티스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Apollo",
+      "korean": [
+        "아폴로"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Galaxy",
+      "korean": [
+        "갤럭시"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Arrastra",
+      "korean": [
+        "아라스트라"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Bengal",
+      "korean": [
+        "벵갈"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Origin Jumpworks",
+      "korean": [
+        "오리진 점프웍스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Origin",
+      "korean": [
+        "오리진"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "890 Jump",
+      "korean": [
+        "890 점프"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Medivac",
+      "korean": [
+        "매디박",
+        "메디박",
+        "메디백",
+        "매디백",
+        "메디벡"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Freelancer",
+      "korean": [
+        "프리랜서"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Prospector",
+      "korean": [
+        "프로스펙터"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Starlancer",
+      "korean": [
+        "스타랜서"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hull C",
+      "korean": [
+        "헐 C",
+        "헐C"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Hull A",
+      "korean": [
+        "헐 A",
+        "헐A"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Fury",
+      "korean": [
+        "퓨리"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Guardian",
+      "korean": [
+        "가디언"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Argo",
+      "korean": [
+        "아르고"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Argo MOLE",
+      "korean": [
+        "아르고 몰"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Nomad",
+      "korean": [
+        "노매드",
+        "노마드"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Merchantman",
+      "korean": [
+        "머천트맨",
+        "머천맨"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "San'tok.yāi",
+      "korean": [
+        "산토캬이",
+        "산토카이",
+        "산토끼"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Syulen",
+      "korean": [
+        "슐렌"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Ursa",
+      "korean": [
+        "우르사",
+        "얼사"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Rover",
+      "korean": [
+        "로버"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Cyclone",
+      "korean": [
+        "사이클론"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Nova",
+      "korean": [
+        "노바"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "ATLS",
+      "korean": [
+        "아틀라스"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "IKTI",
+      "korean": [
+        "이크티"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Akuma",
+      "korean": [
+        "아쿠마"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Dragonfly",
+      "korean": [
+        "드래곤플라이"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Defender",
+      "korean": [
+        "디펜더",
+        "디팬더"
+      ],
+      "category": "함선"
+    },
+    {
+      "english": "Stanton",
+      "korean": [
+        "스탠튼",
+        "스탠턴",
+        "스텐턴"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Pyro",
+      "korean": [
+        "파이로"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Nyx",
+      "korean": [
+        "닉스"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Odin",
+      "korean": [
+        "오딘"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Terra",
+      "korean": [
+        "테라"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Hurston",
+      "korean": [
+        "허스턴"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Crusader",
+      "korean": [
+        "크루세이더"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "ArcCorp",
+      "korean": [
+        "아크콥"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "microTech",
+      "korean": [
+        "마이크로텍",
+        "마텍"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Lorville",
+      "korean": [
+        "로어빌",
+        "로빌"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Orison",
+      "korean": [
+        "오리슨"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Area18",
+      "korean": [
+        "에어리어18",
+        "에이리어18"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "New Babbage",
+      "korean": [
+        "뉴 배비지",
+        "뉴배비지",
+        "뉴베버지",
+        "뉴배버지"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Everus Harbor",
+      "korean": [
+        "에버러스 하버"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Everus",
+      "korean": [
+        "에버러스"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Seraphim",
+      "korean": [
+        "세라핌"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Baijini Point",
+      "korean": [
+        "바이지니 포인트"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Baijini",
+      "korean": [
+        "바이지니"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Port Tressler",
+      "korean": [
+        "포트 트레슬러"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Grim HEX",
+      "korean": [
+        "그림 헥스",
+        "그림헥스",
+        "그림핵스"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Port Olisar",
+      "korean": [
+        "포트 올리사",
+        "포트오리사",
+        "포트 오리사"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Kareah",
+      "korean": [
+        "카레아"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Hangar",
+      "korean": [
+        "행어",
+        "행거"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Daymar",
+      "korean": [
+        "데이마",
+        "데이마르"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Yela",
+      "korean": [
+        "예라",
+        "옐라"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Cellin",
+      "korean": [
+        "셀린"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Lyria",
+      "korean": [
+        "리리아"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Monox",
+      "korean": [
+        "모녹스"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Bloom",
+      "korean": [
+        "블룸"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Terminus",
+      "korean": [
+        "터미너스"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Ruin",
+      "korean": [
+        "루인"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Checkmate",
+      "korean": [
+        "체크메이트"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Orbituary",
+      "korean": [
+        "오비추어리"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Contested Zone",
+      "korean": [
+        "컨테스티드 존",
+        "경쟁 구역"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Contested",
+      "korean": [
+        "컨테스티드"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Executive",
+      "korean": [
+        "익제큐티브",
+        "이그제큐티브"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Levski",
+      "korean": [
+        "레브스키"
+      ],
+      "category": "지역"
+    },
+    {
+      "english": "Roberts",
+      "korean": [
+        "로버츠"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Chris",
+      "korean": [
+        "크리스"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Wikelo",
+      "korean": [
+        "위클로",
+        "위켈로"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Ivar Messer",
+      "korean": [
+        "이바 메서"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Messer",
+      "korean": [
+        "메셔",
+        "메서",
+        "매서"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "United Empire of Earth",
+      "korean": [
+        "지구연합제국"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Vanduul",
+      "korean": [
+        "반둘"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Banu",
+      "korean": [
+        "바누"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Xi'an",
+      "korean": [
+        "시안"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Tevarin",
+      "korean": [
+        "테바린"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "Nine Tails",
+      "korean": [
+        "나인테일",
+        "나인테일스"
+      ],
+      "category": "인물 / 세력"
+    },
+    {
+      "english": "XenoThreat",
+      "korean": [
+        "제노쓰렛"
+      ],
+      "category": "인물 / 세력"
+    }
+  ]
+}

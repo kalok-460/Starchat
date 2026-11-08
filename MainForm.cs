@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 StarChat contributors
 using System;
 using System.Collections.Generic;
@@ -7,6 +7,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -25,6 +26,7 @@ sealed class TranslationJob {public ChatMessage Message;public Room Room;public 
 sealed class MainForm : Form {
     readonly SettingsStore store;readonly Settings settings;readonly bool smoke;
     readonly Translator translator=new Translator();readonly Spectrum spectrum;readonly OcrClient ocr=new OcrClient();readonly ChatTracker tracker=new ChatTracker();readonly OcrLog log;
+    internal Func<IntPtr,Keys,string,Keys,bool,Task<string>> GameInput=Native.SendGame;
     readonly Overlay overlay,spectrumOverlay;Room lastSpectrumRoom;ActivationHook hook;readonly NotifyIcon tray;
     Overlay ActiveOverlay {get{return current==gameRoom||current==homeRoom||current==null?overlay:spectrumOverlay;}}
     bool AnyOverlayInteractive {get{return overlay.Interactive||spectrumOverlay.Interactive;}}
@@ -40,15 +42,20 @@ sealed class MainForm : Form {
     readonly Panel composer=new Panel(),gameComposer=new Panel();readonly FlowLayoutPanel chatActions=new FlowLayoutPanel();
     readonly ToolTip actionTips=new ToolTip{InitialDelay=350,ReshowDelay=100,AutoPopDelay=8000};readonly IconButton invitationsButton,refreshButton,friendButton;
     readonly Timer searchTimer=new Timer{Interval=250};string searchQuery="";bool logSearchMatch,logSearchBusy,fittingFriends;int searchRevision;
+    readonly List<ChatMessage> searchedLogs=new List<ChatMessage>();
+    sealed class TranscriptEntry {public ChatMessage Message;public int Start,Length,HandleStart,HandleLength;public bool Matches;}
+    readonly List<TranscriptEntry> transcriptEntries=new List<TranscriptEntry>();
+    Room renderedRoom;string renderedQuery="",searchSelectionKey="";
+    [DllImport("user32.dll",EntryPoint="SendMessageW")] static extern IntPtr TranscriptScroll(IntPtr handle,int message,IntPtr parameter,ref Point point);
     readonly Room homeRoom=new Room{Id="home",Name=L.T("홈"),Type="home"},gameRoom=new Room{Id="game",Name=L.T("인게임 채팅"),Type="game"};
     readonly List<Room> rooms=new List<Room>();readonly Dictionary<string,string> drafts=new Dictionary<string,string>();
     Room current;IntPtr gameWindow;string gameTitle="";bool connectedGame,pollBusy,ocrStarted,settingBounds;volatile bool sendBusy,closing;int accountEpoch;DateTime nextFriends=DateTime.MinValue;
     readonly object ocrGate=new object();object latestOcr;readonly Queue<TranslationJob> translations=new Queue<TranslationJob>();int workEpoch,translationActive;bool transcriptDirty;readonly Timer renderTimer=new Timer{Interval=100};readonly HashSet<string> changedRooms=new HashSet<string>();
-    string reviewOriginal="",reviewTranslated="",reviewRoom="",selfNickname="";readonly HashSet<string> noticedInvites=new HashSet<string>();
+    string selfNickname="";readonly HashSet<string> noticedInvites=new HashSet<string>();
     readonly HttpClient avatarHttp=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(10)};
     public MainForm(SettingsStore storage,Settings configuration,bool testing) {
         store=storage;settings=configuration;smoke=testing;spectrumEnabledApplied=settings.SpectrumEnabled;log=new OcrLog(settings);spectrum=new Spectrum(store.Root);overlay=new Overlay(settings);spectrumOverlay=new Overlay(settings){IsGame=false,RoomName="Spectrum"};
-        Text=L.T("StarChat 0.3.13 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
+        Text=L.T("StarChat 0.3.17 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
         Icon=AppIcon.Load();
         Size=new Size(1100,760);MinimumSize=new Size(800,580);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;
         var left=new Panel{Dock=DockStyle.Left,Width=340,BackColor=Theme.Side,Padding=new Padding(16)};
@@ -60,6 +67,7 @@ sealed class MainForm : Form {
         sidebar.OcrToggled+=on=>{settings.OcrEnabled=on;ApplyOverlaySettings();SaveRoomOptions();};
         sidebar.SpectrumToggled+=on=>{settings.SpectrumEnabled=on;ApplyOverlaySettings();SaveRoomOptions();};
         sidebar.SettingsRequested+=OpenSettings;sidebar.SearchRequested+=FilterRooms;sidebar.AddRoomRequested+=()=>Fire(()=>GroupDialog(false));
+        sidebar.SearchNavigated+=NavigateSearch;
         left.Controls.Add(sidebar);
         content.Dock=DockStyle.Fill;content.Padding=new Padding(26,18,26,16);
         var heading=new Panel{Name="Heading",Dock=DockStyle.Top,Height=86};title.Dock=DockStyle.Top;title.Height=42;title.Font=new Font("맑은 고딕",22,FontStyle.Bold);subTitle.Dock=DockStyle.Fill;subTitle.ForeColor=Theme.Muted;subTitle.Padding=new Padding(2,3,0,0);heading.Controls.Add(subTitle);heading.Controls.Add(title);
@@ -79,14 +87,13 @@ sealed class MainForm : Form {
         var friendHeading=new FlowLayoutPanel{Name="FriendHeading",Dock=DockStyle.Top,Height=58,WrapContents=false,Padding=new Padding(14,2,0,0)};friendHeading.Controls.Add(new Label{Text=L.T("친구 목록"),AutoSize=true,Font=new Font("맑은 고딕",20,FontStyle.Bold),Margin=new Padding(0,3,16,0)});friendHeading.Controls.Add(refreshButton);friendHeading.Controls.Add(friendButton);
         home.Controls.Add(friends);home.Controls.Add(friendHeading);home.Controls.Add(identity);
         transcript.Dock=DockStyle.Fill;transcript.BackColor=Theme.Bg;transcript.ForeColor=Theme.Text;transcript.BorderStyle=BorderStyle.None;transcript.ReadOnly=true;transcript.DetectUrls=false;transcript.Font=new Font("맑은 고딕",11);
+        transcript.MouseUp+=(s,e)=>{if(e.Button!=MouseButtons.Right)return;var message=TranscriptMessageAt(e.Location);if(message!=null)ShowChatMenu(transcript,e.Location,current,message,TranscriptHandleAt(e.Location)!=null);};
         composer.Dock=DockStyle.Bottom;composer.Height=102;compose.Dock=DockStyle.Top;compose.Font=new Font("맑은 고딕",12);compose.BackColor=Theme.Side;compose.ForeColor=Theme.Text;compose.BorderStyle=BorderStyle.FixedSingle;compose.MaxLength=2000;
         chatActions.Dock=DockStyle.Bottom;chatActions.Height=50;chatActions.WrapContents=false;chatActions.Controls.Add(ActionButton(ActionIcon.Send,L.T("보내기"),()=>Run(()=>Submit(compose,false))));chatActions.Controls.Add(ActionButton(ActionIcon.Translate,L.T("영어로 번역"),()=>Run(()=>TranslateCompose(compose))));chatActions.Controls.Add(ActionButton(ActionIcon.InviteRoom,L.T("이 방에 초대"),()=>Run(()=>GroupDialog(true))));composeHint.AutoSize=true;composeHint.Padding=new Padding(0,14,0,0);composeHint.ForeColor=Theme.Muted;chatActions.Controls.Add(composeHint);composer.Controls.Add(compose);composer.Controls.Add(chatActions);
         gameComposer.Dock=DockStyle.Fill;gameComposer.BackColor=Theme.Side;gameComposer.Padding=new Padding(10,7,10,7);var adjust=Theme.Button(L.T("오버레이 위치 조정"),PreviewOverlay);adjust.Name="AdjustOcrOverlay";adjust.Dock=DockStyle.Left;adjust.Width=170;var gameHint=new Label{Dock=DockStyle.Fill,Text=L.T("게임 채팅은 투명 입력창에서 작성합니다."),TextAlign=ContentAlignment.MiddleLeft,Padding=new Padding(12,0,0,0),ForeColor=Theme.Muted,AutoEllipsis=true};gameComposer.Controls.Add(gameHint);gameComposer.Controls.Add(adjust);composer.Controls.Add(gameComposer);
         chat.Controls.Add(transcript);chat.Controls.Add(composer);content.Controls.Add(home);content.Controls.Add(chat);content.Controls.Add(heading);Controls.Add(content);Controls.Add(left);Controls.Add(status);
         compose.Submit=()=>Fire(()=>Submit(compose,false));compose.Translate=()=>Fire(()=>TranslateCompose(compose));compose.Cycle=Cycle;compose.Cancel=()=>SelectRoom(homeRoom);
         ConnectOverlay(overlay);ConnectOverlay(spectrumOverlay);
-        compose.TextChanged+=(s,e)=>ResetReviewIfChanged(compose.Text);
-        overlay.HandleRequested+=p=>Fire(()=>RefreshHandleMenu(p));
         spectrum.EventReceived+=OnSpectrumEvent;
         spectrum.Status+=SetStatus;spectrum.Connected+=()=>{accountEpoch++;loginButton.Text=L.T("로그아웃");Fire(LoadAccount);};
         spectrum.Disconnected+=()=>{accountEpoch++;ClearAccount();};
@@ -117,12 +124,12 @@ sealed class MainForm : Form {
     }
     static bool ContainsText(string value,string query){return (value??"").IndexOf(query,StringComparison.OrdinalIgnoreCase)>=0;}
     bool MatchesSearch(Room room){return searchQuery.Length==0||ContainsText(room.Name,searchQuery)||room==gameRoom&&(ContainsText("OCR",searchQuery)||logSearchMatch)||room.Messages.Any(m=>ContainsText(m.Text,searchQuery)||ContainsText(m.Translation,searchQuery)||ContainsText(m.Handle,searchQuery));}
-    void FilterRooms(string query){searchQuery=(query??"").Trim();searchRevision++;logSearchMatch=false;searchTimer.Stop();RefreshSidebar();if(searchQuery.Length>0)searchTimer.Start();}
+    void FilterRooms(string query){searchQuery=(query??"").Trim();searchRevision++;logSearchMatch=false;searchedLogs.Clear();searchTimer.Stop();RefreshSidebar();RenderTranscript();if(searchQuery.Length>0)searchTimer.Start();}
     // 큰 OCR 기록의 디스크 읽기는 UI 밖에서 수행한다. 입력이 바뀌면 이전 검색
     // 결과를 버리고 최신 검색만 반영하여 다른 검색어의 방이 뒤늦게 나타나지 않게 한다.
     async Task SearchOcrLogs(){
         if(closing||searchQuery.Length==0||logSearchBusy)return;int revision=searchRevision;string query=searchQuery;logSearchBusy=true;
-        try{string result=await Task.Run(()=>log.Search(query));if(!closing&&revision==searchRevision){logSearchMatch=result!=L.T("검색 결과 없음");RefreshSidebar();}}
+        try{var result=await Task.Run(()=>log.SearchMessages(query));if(!closing&&revision==searchRevision){searchedLogs.Clear();searchedLogs.AddRange(result);logSearchMatch=result.Count>0;RefreshSidebar();if(current==gameRoom)RenderTranscript();}}
         catch(Exception ex){if(!closing&&revision==searchRevision)SetStatus(L.T("OCR 기록 검색 실패: ")+ex.Message);}
         finally{logSearchBusy=false;if(!closing&&revision!=searchRevision&&searchQuery.Length>0)searchTimer.Start();}
     }
@@ -138,7 +145,7 @@ sealed class MainForm : Form {
         home.Visible=room==homeRoom;chat.Visible=room!=homeRoom;content.Controls["Heading"].Visible=room!=homeRoom;title.Text=room.Name;subTitle.Text=room==homeRoom?L.T("친구들과 연결하고, 함께 비행하세요."):room==gameRoom?L.T("화면 속 채팅을 읽고 번역합니다. 기록은 이 PC에 저장됩니다."):L.T("Spectrum · 대화는 서버에 보관됩니다.");
         compose.Visible=chatActions.Visible=room!=gameRoom;gameComposer.Visible=room==gameRoom;composer.Height=room==gameRoom?60:102;
         string draft;drafts.TryGetValue(room.Id,out draft);compose.Text=draft??"";ActiveOverlay.Compose.Text=draft??"";
-        reviewOriginal=reviewTranslated=reviewRoom="";composeHint.Text=room==gameRoom?(settings.Review?L.T("Enter 번역 → Enter 전송"):L.T("Enter 번역 후 전송")):L.T("Enter 전송 · Tab 방 전환");
+        composeHint.Text=room==gameRoom?(settings.Review?L.T("Enter 번역 후 게임 입력칸에서 확인"):L.T("Enter 번역 후 전송")):L.T("Enter 전송 · Tab 방 전환");
         compose.TranslationKey=(Keys)settings.TranslateKey;compose.SubmitKey=(Keys)settings.ActivationKey;RenderTranscript();SyncOverlayRooms();ApplyBounds(true);
         if(input&&OverlayEnabled(room)){ActiveOverlay.SetInteractive(true,gameWindow);SetInputHint();}
         RefreshOverlayVisibility();
@@ -148,7 +155,7 @@ sealed class MainForm : Form {
     bool CanOpenInput(){return settings.OcrEnabled||settings.SpectrumEnabled&&rooms.Any(r=>r!=gameRoom);}
     void ConnectOverlay(Overlay window){
         window.Compose.Submit=()=>Fire(()=>Submit(window.Compose,true));window.Compose.Translate=()=>Fire(()=>TranslateCompose(window.Compose));window.Compose.Cycle=Cycle;
-        window.Compose.TextChanged+=(s,e)=>{if(window==ActiveOverlay)ResetReviewIfChanged(window.Compose.Text);};
+        window.HandleRequested+=p=>{var message=window.MessageAt(p);var room=window.IsGame?gameRoom:lastSpectrumRoom;if(message!=null&&room!=null)ShowChatMenu(window,p,room,message,window.IsGame);else if(window.IsGame)ShowHandleMenu(null,p);};
         window.ClosedInput+=()=>{if(window==ActiveOverlay){SaveDraft(window.Compose);compose.Text=window.Compose.Text;}if(gameWindow!=IntPtr.Zero)Native.SetForegroundWindow(gameWindow);else window.Hide();RefreshOverlayVisibility();};
         window.ChangedBounds+=()=>{if(!settingBounds)SaveOverlayBounds(window);};
     }
@@ -182,7 +189,6 @@ sealed class MainForm : Form {
     }
     void SaveDraft(ComposerBox box){if(current!=null)drafts[current.Id]=box.Text;}
     void Cycle(){if(sendBusy)return;var list=rooms.Where(RoomTab).ToList();if(list.Count==0)return;int index=list.IndexOf(current);SelectRoom(list[(index+1)%list.Count]);}
-    void ResetReviewIfChanged(string value){if(value!=reviewOriginal){reviewTranslated="";reviewRoom="";}}
     // 전송은 하나의 작업으로 잠근다. Spectrum 전송 성공 뒤 내역 읽기가 실패해도
     // 이미 보낸 초안을 남겨 재전송하게 만들지 않도록 쓰기와 후속 읽기를 분리한다.
     async Task Submit(ComposerBox box,bool fromOverlay){
@@ -195,16 +201,14 @@ sealed class MainForm : Form {
                 if(gameWindow==IntPtr.Zero)throw new InvalidOperationException(L.T("게임 실행 후 전송할 수 있습니다."));
                 string translated;
                 if(!RoomTranslation(destination))translated=original;
-                else if(settings.Review&&reviewOriginal==original&&reviewRoom==destination.Id&&!string.IsNullOrEmpty(reviewTranslated))translated=reviewTranslated;
                 else {
                     SetStatus(L.T("영어로 번역 중…"));translated=await translator.Translate(original,"auto","en",settings.Translation());
-                    if(settings.Review){reviewOriginal=original;reviewTranslated=translated;reviewRoom=destination.Id;SetStatus(L.T("전송 미리보기: ")+translated+L.T("   · Enter 한 번 더 누르면 전송"));return;}
                 }
                 if(gameWindow!=targetWindow)throw new InvalidOperationException(L.T("게임 창이 바뀌어 전송을 중단했습니다."));
                 var foreground=Native.GetForegroundWindow();if(foreground!=Handle&&foreground!=overlay.Handle&&foreground!=targetWindow)throw new InvalidOperationException(L.T("다른 앱으로 이동하여 전송을 중단했습니다."));
                 if(fromOverlay)ActiveOverlay.SetInteractive(false);
-                string warning=await Native.SendGame(targetWindow,(Keys)settings.GameKey,translated.Replace("\r","").Replace("\n"," "),(Keys)settings.ActivationKey);
-                SetStatus(L.T("게임에 붙여넣기 입력을 전달했습니다.")+(warning==null?"":" "+warning));
+                string warning=await GameInput(targetWindow,(Keys)settings.GameKey,translated.Replace("\r","").Replace("\n"," "),(Keys)settings.ActivationKey,!settings.Review);
+                SetStatus((settings.Review?L.T("게임 입력칸에 입력했습니다. 확인 후 게임에서 Enter로 보내세요."):L.T("게임에 일괄 키 입력을 전달했습니다."))+(warning==null?"":" "+warning));
             } else {
                 if(sendEpoch!=accountEpoch)throw new InvalidOperationException(L.T("로그인 계정이 바뀌었습니다."));
                 SetStatus(destination.Name+L.T("에 전송 중…"));var sent=await spectrum.Api("send",new{lobbyId=destination.Id,text=original});
@@ -212,7 +216,7 @@ sealed class MainForm : Form {
                 ApplySentMessage(destination,sent,original,sendEpoch);
                 SetStatus(L.T("전송 완료"));
             }
-            box.Clear();drafts[destination.Id]="";compose.Clear();ActiveOverlay.Compose.Clear();reviewTranslated="";
+            box.Clear();drafts[destination.Id]="";compose.Clear();ActiveOverlay.Compose.Clear();
             if(fromOverlay)CloseOverlayInput();
             if(destination!=gameRoom)Fire(()=>PollRoom(destination));
         }catch{
@@ -229,14 +233,68 @@ sealed class MainForm : Form {
         }
         sendBusy=true;box.ReadOnly=true;try{string translated=await translator.Translate(box.Text,"auto","en",settings.Translation());box.Text=translated;box.SelectionStart=box.TextLength;SetStatus(L.T("번역 완료 · Enter로 전송"));}finally{sendBusy=false;box.ReadOnly=false;}
     }
+    static string SearchMessageKey(ChatMessage message){return message.Time.ToString("o")+"\n"+message.Handle+"\n"+message.Text;}
+    bool MessageMatchesSearch(ChatMessage message){return searchQuery.Length>0&&(ContainsText(message.Text,searchQuery)||ContainsText(message.Translation,searchQuery)||ContainsText(message.Handle,searchQuery));}
+    List<ChatMessage> TranscriptMessages(){
+        if(current==null||current==homeRoom)return new List<ChatMessage>();
+        if(current!=gameRoom||searchQuery.Length==0||searchedLogs.Count==0)return current.Messages;
+        // Historical search results are a view only: never queue them for OCR,
+        // translate them again, persist them again or put them in the overlay.
+        return current.Messages.Concat(searchedLogs).GroupBy(SearchMessageKey).Select(g=>g.First()).OrderBy(m=>m.Time).ToList();
+    }
     void RenderTranscript(){
-        if(current==null||current==homeRoom)return;var list=current.Messages;
-        transcript.Clear();foreach(var m in list){transcript.SelectionColor=Theme.Accent;transcript.AppendText(m.Handle+"  ");transcript.SelectionColor=Theme.Muted;transcript.AppendText(m.Time.ToString("HH:mm")+"\n");transcript.SelectionColor=Theme.Text;transcript.AppendText(m.Text+"\n");if((RoomTranslation(current)||m.ManualTranslation)&&!string.IsNullOrEmpty(m.Translation)){transcript.SelectionColor=Theme.Accent;transcript.AppendText(m.Translation+"\n");}transcript.AppendText("\n");}
-        if(list.Count==0){transcript.SelectionColor=Theme.Muted;transcript.AppendText(current==gameRoom?L.T("게임 화면의 채팅 영역을 지정하면 원문과 번역이 여기에 표시됩니다."):L.T("대화 내용을 불러오는 중이거나 아직 메시지가 없습니다."));}
-        transcript.SelectionStart=transcript.TextLength;transcript.ScrollToCaret();
+        bool changed=renderedRoom!=current||renderedQuery!=searchQuery;renderedRoom=current;renderedQuery=searchQuery;
+        if(changed)searchSelectionKey="";
+        var scroll=Point.Empty;if(transcript.IsHandleCreated)TranscriptScroll(transcript.Handle,0x4DD,IntPtr.Zero,ref scroll);
+        transcriptEntries.Clear();
+        if(current==null||current==homeRoom){sidebar.SetSearchResults(-1,0);return;}
+        var list=TranscriptMessages();
+        Native.SendMessage(transcript.Handle,0xB,IntPtr.Zero,IntPtr.Zero);
+        try{
+            transcript.Clear();
+            foreach(var m in list){
+                var entry=new TranscriptEntry{Message=m,Start=transcript.TextLength,HandleStart=transcript.TextLength,HandleLength=m.Handle.Length,Matches=MessageMatchesSearch(m)};
+                transcript.SelectionBackColor=Theme.Bg;transcript.SelectionColor=Theme.Accent;transcript.AppendText(m.Handle+"  ");transcript.SelectionColor=Theme.Muted;transcript.AppendText(m.Time.ToString("HH:mm")+"\n");transcript.SelectionColor=Theme.Text;transcript.AppendText(m.Text+"\n");
+                if((RoomTranslation(current)||m.ManualTranslation||searchQuery.Length>0&&ContainsText(m.Translation,searchQuery))&&!string.IsNullOrEmpty(m.Translation)){transcript.SelectionColor=Theme.Accent;transcript.AppendText(m.Translation+"\n");}
+                entry.Length=transcript.TextLength-entry.Start;transcript.AppendText("\n");transcriptEntries.Add(entry);
+                if(entry.Matches){transcript.Select(entry.Start,entry.Length);transcript.SelectionBackColor=Color.FromArgb(255,231,104);transcript.SelectionColor=Color.FromArgb(32,32,32);transcript.Select(transcript.TextLength,0);}
+            }
+            if(list.Count==0){transcript.SelectionBackColor=Theme.Bg;transcript.SelectionColor=Theme.Muted;transcript.AppendText(current==gameRoom?L.T("게임 화면의 채팅 영역을 지정하면 원문과 번역이 여기에 표시됩니다."):L.T("대화 내용을 불러오는 중이거나 아직 메시지가 없습니다."));}
+            var hits=transcriptEntries.Where(x=>x.Matches).ToList();int selected=hits.FindIndex(x=>SearchMessageKey(x.Message)==searchSelectionKey);
+            bool jump=changed||selected<0;
+            if(hits.Count>0){if(selected<0)selected=0;searchSelectionKey=SearchMessageKey(hits[selected].Message);}
+            sidebar.SetSearchResults(selected,hits.Count);
+            if(searchQuery.Length==0){transcript.Select(transcript.TextLength,0);transcript.ScrollToCaret();}
+            else if(hits.Count>0&&jump)ScrollToSearch(hits[selected]);
+            else {transcript.Select(hits.Count>0?hits[selected].Start:0,0);TranscriptScroll(transcript.Handle,0x4DE,IntPtr.Zero,ref scroll);}
+        }finally{Native.SendMessage(transcript.Handle,0xB,(IntPtr)1,IntPtr.Zero);transcript.Invalidate();}
+    }
+    void ScrollToSearch(TranscriptEntry entry){transcript.Select(entry.Start,0);transcript.ScrollToCaret();}
+    void NavigateSearch(int direction){
+        if(searchQuery.Length==0||current==null||current==homeRoom)return;
+        var hits=transcriptEntries.Where(x=>x.Matches).ToList();if(hits.Count==0)return;
+        int previous=hits.FindIndex(x=>SearchMessageKey(x.Message)==searchSelectionKey);
+        int next=previous<0?(direction<0?hits.Count-1:0):(previous+(direction<0?-1:1)+hits.Count)%hits.Count;
+        searchSelectionKey=SearchMessageKey(hits[next].Message);sidebar.SetSearchResults(next,hits.Count);ScrollToSearch(hits[next]);
+    }
+    string TranscriptHandleAt(Point point){
+        if(current!=gameRoom||!transcript.ClientRectangle.Contains(point))return null;
+        int index=transcript.GetCharIndexFromPosition(point);
+        var entry=transcriptEntries.FirstOrDefault(x=>index>=x.HandleStart&&index<x.HandleStart+x.HandleLength);
+        if(entry==null)return null;
+        Point start=transcript.GetPositionFromCharIndex(index),end=transcript.GetPositionFromCharIndex(index+1);
+        int width=end.Y==start.Y?Math.Max(1,end.X-start.X):Math.Max(1,transcript.Font.Height);
+        return new Rectangle(start.X,start.Y,width,transcript.Font.Height+3).Contains(point)?entry.Message.Handle:null;
+    }
+    ChatMessage TranscriptMessageAt(Point point){
+        if(current==null||current==homeRoom||!transcript.ClientRectangle.Contains(point))return null;
+        int index=transcript.GetCharIndexFromPosition(point);var start=transcript.GetPositionFromCharIndex(index);
+        if(point.Y<start.Y||point.Y>=start.Y+transcript.Font.Height+3)return null;
+        var entry=transcriptEntries.FirstOrDefault(x=>index>=x.Start&&index<x.Start+x.Length);
+        return entry==null?null:entry.Message;
     }
     void CloseOverlayInput(){overlay.SetInteractive(false);spectrumOverlay.SetInteractive(false);if(gameWindow!=IntPtr.Zero)Native.SetForegroundWindow(gameWindow);RefreshOverlayVisibility();}
-    void SetInputHint(){ActiveOverlay.SetHint(current==gameRoom?(settings.Review?L.T("Enter / 활성화 키: 번역 → 전송 · Tab 방 전환"):L.T("Enter / 활성화 키: 번역 후 전송 · Tab 방 전환")):L.T("Enter / 활성화 키: 전송 · Tab 방 전환"));}
+    void SetInputHint(){ActiveOverlay.SetHint(current==gameRoom?(settings.Review?L.T("Enter / 활성화 키: 게임 입력칸에 번역문 넣기 · Tab 방 전환"):L.T("Enter / 활성화 키: 번역 후 전송 · Tab 방 전환")):L.T("Enter / 활성화 키: 전송 · Tab 방 전환"));}
     void OpenInput(){
         if(!OverlayEnabled(current)){var room=settings.OcrEnabled?gameRoom:settings.SpectrumEnabled?(lastSpectrumRoom??rooms.FirstOrDefault(r=>r!=gameRoom)):null;if(room==null){SetStatus(L.T("OCR 또는 Spectrum 투명창을 켜 주세요."));return;}SelectRoom(room);}
         SaveDraft(compose);ActiveOverlay.Compose.Text=compose.Text;ApplyBounds();ActiveOverlay.SetInteractive(true,gameWindow);
@@ -268,13 +326,17 @@ sealed class MainForm : Form {
     void TickGame(){
         try {
             var process=Native.Game();IntPtr handle=process==null?IntPtr.Zero:process.MainWindowHandle;
-            if(handle!=gameWindow){if(gameWindow!=IntPtr.Zero)StopOcrWork();gameWindow=handle;gameTitle=process==null?"":process.MainWindowTitle;
-                if(handle!=IntPtr.Zero){connectedGame=true;Hide();if(current==homeRoom&&settings.OcrEnabled)SelectRoom(gameRoom);ApplyBounds();StartOcr();}
-                else if(connectedGame){connectedGame=false;overlay.SetInteractive(false);spectrumOverlay.SetInteractive(false);overlay.Hide();spectrumOverlay.Hide();StopOcrWork();Restore();}}
+            UpdateGameConnection(handle,process==null?"":process.MainWindowTitle);
             if(process!=null)process.Dispose();
             if(gameWindow!=IntPtr.Zero&&AnyOverlayInteractive&&!sendBusy&&Native.GetForegroundWindow()==gameWindow)ActiveOverlay.Compose.Cancel();
             if(gameWindow!=IntPtr.Zero){ApplyBounds();RefreshOverlayVisibility();}
         }catch(Exception ex){SetStatus(L.T("게임 연결 확인: ")+ex.Message);}
+    }
+    void UpdateGameConnection(IntPtr handle,string caption){
+        if(handle==gameWindow)return;
+        if(gameWindow!=IntPtr.Zero)StopOcrWork();gameWindow=handle;gameTitle=caption;
+        if(handle!=IntPtr.Zero){connectedGame=true;if(current==homeRoom&&settings.OcrEnabled)SelectRoom(gameRoom);ApplyBounds();StartOcr();}
+        else if(connectedGame){connectedGame=false;overlay.SetInteractive(false);spectrumOverlay.SetInteractive(false);overlay.Hide();spectrumOverlay.Hide();StopOcrWork();}
     }
     void StartOcr(){if(!settings.OcrEnabled)return;try{ocr.Start();ocrStarted=true;ConfigureOcr();}catch(Exception ex){SetStatus(ex.Message);}}
     Settings OcrCaptureSettings(){
@@ -412,7 +474,7 @@ sealed class MainForm : Form {
         foreach(Control c in friends.Controls.Cast<Control>().ToArray()){friends.Controls.Remove(c);c.Dispose();}
         CancelTranslations(false);ToastWindow.CloseAll();selfId="";selfNickname="";eventRetries.Clear();eventRetryAt.Clear();changedRooms.Clear();roomListChanged=false;selfAvatar.ShowStatus=false;rooms.RemoveAll(r=>r!=gameRoom);noticedInvites.Clear();drafts.Keys.Where(k=>k!="game").ToList().ForEach(k=>drafts.Remove(k));
         lastSpectrumRoom=null;spectrumOverlay.SetInteractive(false);spectrumOverlay.Hide();spectrumOverlay.Compose.Clear();SyncOverlayRooms();
-        if(current!=gameRoom){compose.Clear();overlay.Compose.Clear();reviewOriginal=reviewTranslated=reviewRoom="";current=null;bool wasBusy=sendBusy;sendBusy=false;SelectRoom(gameWindow!=IntPtr.Zero&&settings.OcrEnabled?gameRoom:homeRoom);sendBusy=wasBusy;}
+        if(current!=gameRoom){compose.Clear();overlay.Compose.Clear();current=null;bool wasBusy=sendBusy;sendBusy=false;SelectRoom(gameWindow!=IntPtr.Zero&&settings.OcrEnabled?gameRoom:homeRoom);sendBusy=wasBusy;}
         RefreshSidebar();
     }
     void UpdateInvitationBadge(int count){invitationsButton.BadgeCount=count;string description=count>0?L.T("받은 초대 ")+count+L.T("개"):L.T("받은 초대");invitationsButton.AccessibleName=description;actionTips.SetToolTip(invitationsButton,description);}
@@ -429,6 +491,29 @@ sealed class MainForm : Form {
     async Task CheckInvitations(){if(!settings.SpectrumEnabled)return;int epoch=accountEpoch,receive=receptionEpoch;var result=await spectrum.Api("invitations",new{});if(!ReceptionCurrent(receive)||epoch!=accountEpoch)return;var pending=Json.Rows(result,"invitations").ToList();UpdateInvitationBadge(pending.Count);foreach(var invite in pending){if(noticedInvites.Add(Json.Str(invite,"urn"))&&settings.Notifications){tray.BalloonTipTitle=L.T("Spectrum 그룹 초대");tray.BalloonTipText=Json.Str(invite,"inviter")+" · "+Json.Str(invite,"name")+L.T("\n내 계정 옆의 종 아이콘에서 확인할 수 있습니다.");tray.ShowBalloonTip(6000);}}}
     void OpenSettings(){using(var dialog=new SettingsForm(settings,rooms.Where(r=>r!=gameRoom).Select(r=>new KeyValuePair<string,string>(r.Id,r.Name)))){if(dialog.ShowDialog(this)==DialogResult.OK){try{store.Save(settings);if(hook!=null)hook.Key=(Keys)settings.ActivationKey;compose.TranslationKey=(Keys)settings.TranslateKey;compose.SubmitKey=(Keys)settings.ActivationKey;overlay.Compose.SubmitKey=(Keys)settings.ActivationKey;spectrumOverlay.Compose.SubmitKey=(Keys)settings.ActivationKey;ApplyOverlaySettings();foreach(var room in rooms)foreach(var message in room.Messages)if(string.IsNullOrEmpty(message.Translation))message.TranslationAttempted=false;SetStatus(L.T("설정을 저장했습니다."));}catch(Exception ex){SetStatus(ex.Message);}}}}
     ContextMenuStrip handleMenu;
+    ContextMenuStrip CreateChatMenu(Room room,ChatMessage message,bool includeHandle){
+        var menu=includeHandle?CreateHandleMenu(message.Handle):new ContextMenuStrip{BackColor=Theme.Side,ForeColor=Theme.Text,ShowImageMargin=false};
+        if(includeHandle)menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(L.T("다시 번역"),null,(s,e)=>Fire(()=>RetranslateMessage(room,message))).Enabled=!message.Translating;
+        return menu;
+    }
+    void ShowChatMenu(Control owner,Point point,Room room,ChatMessage message,bool includeHandle){
+        if(handleMenu!=null)handleMenu.Dispose();handleMenu=CreateChatMenu(room,message,includeHandle);handleMenu.Show(owner,point);
+    }
+    async Task RetranslateMessage(Room room,ChatMessage message){
+        if(closing||message==null||message.Translating||room==null||room==homeRoom)return;
+        if(room!=gameRoom&&(!settings.SpectrumEnabled||!rooms.Contains(room)))return;
+        int account=accountEpoch,receive=receptionEpoch;string original=message.Text;
+        message.Translating=true;message.TranslationAttempted=true;
+        try{
+            SetStatus(L.T("선택한 채팅을 다시 번역하고 있습니다."));
+            string translated=await translator.Translate(original,room==gameRoom?"en":"auto",settings.Language,settings.Translation(),false,true);
+            if(closing||message.Text!=original||room!=gameRoom&&(account!=accountEpoch||!ReceptionCurrent(receive)||!rooms.Contains(room)))return;
+            message.Translation=translated;message.ManualTranslation=true;
+            if(current==room)RenderTranscript();SyncOverlayRooms();if(searchQuery.Length>0)RefreshSidebar();
+            SetStatus(L.T("선택한 채팅을 다시 번역했습니다."));
+        }finally{message.Translating=false;}
+    }
     ContextMenuStrip CreateHandleMenu(string handle){
         bool found=!string.IsNullOrWhiteSpace(handle);
         var menu=new ContextMenuStrip{BackColor=Theme.Side,ForeColor=Theme.Text,ShowImageMargin=false};
@@ -445,8 +530,11 @@ sealed class MainForm : Form {
         return menu;
     }
     void ShowHandleMenu(string handle,Point point){
+        ShowMemberMenu(overlay,handle,point);
+    }
+    void ShowMemberMenu(Control owner,string handle,Point point){
         if(handleMenu!=null)handleMenu.Dispose();handleMenu=CreateHandleMenu(handle);
-        handleMenu.Show(overlay,point);
+        handleMenu.Show(owner,point);
     }
     Task RefreshHandleMenu(Point point){if(overlay.IsGame&&overlay.Interactive)ShowHandleMenu(overlay.HandleAt(point),point);return Task.FromResult(0);}
     async Task MemberDialog(string initial,bool preferDm){

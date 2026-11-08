@@ -20,6 +20,13 @@ sealed class SendTranslationFixture : HttpMessageHandler {
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent("[[[\"Hello Star Citizen!\",\"안녕하세요\"]]]")});
     }
 }
+sealed class ChatTranslationFixture : HttpMessageHandler {
+    public int Requests;public bool Fail;public string Reply="Hello Star Citizen!";
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancel){
+        Requests++;await Task.Delay(15);
+        return new HttpResponseMessage(Fail?HttpStatusCode.InternalServerError:HttpStatusCode.OK){Content=new StringContent(Json.New().Serialize(new{message=new{content=Reply},done=true}))};
+    }
+}
 sealed class TestComposer : ComposerBox {
     public bool Press(Keys key, bool repeat) {
         var message=Message.Create(Handle,0x100,(IntPtr)(int)(key&Keys.KeyCode),new IntPtr(repeat?0x40000001:1));
@@ -27,25 +34,20 @@ sealed class TestComposer : ComposerBox {
     }
 }
 sealed class SyntheticInputWindow : Form {
-    public readonly TextBox Input=new TextBox {Dock=DockStyle.Fill};
+    public readonly TextBox Input=new TextBox {Dock=DockStyle.Fill,ImeMode=ImeMode.Disable};
     public int OpenCount,EnterCount,BackslashCount,BackslashUpCount,PasteCount,TextChanges,RejectedPasteCount;
-    public double PasteLeadMs,PasteReleaseMs;
-    long controlDown,vUp;
     public string Submitted="";
     public SyntheticInputWindow() {
         Text="StarChat isolated input test (closes automatically)";
         Size=new Size(600,130);StartPosition=FormStartPosition.CenterScreen;TopMost=true;
         Controls.Add(Input);
-        Input.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.ControlKey)controlDown=Stopwatch.GetTimestamp();};
-        Input.KeyUp+=(s,e)=>{if(e.KeyCode==Keys.OemPipe)BackslashUpCount++;if(e.KeyCode==Keys.V)vUp=Stopwatch.GetTimestamp();if(e.KeyCode==Keys.ControlKey&&vUp!=0)PasteReleaseMs=(Stopwatch.GetTimestamp()-vUp)*1000.0/Stopwatch.Frequency;};
+        Input.KeyUp+=(s,e)=>{if(e.KeyCode==Keys.OemPipe)BackslashUpCount++;};
         Input.TextChanged+=(s,e)=>TextChanges++;
     }
     protected override bool ProcessCmdKey(ref Message message,Keys key) {
         if(key==Keys.OemPipe)BackslashCount++;
         if(key==(Keys.Control|Keys.V)){
-            PasteLeadMs=(Stopwatch.GetTimestamp()-controlDown)*1000.0/Stopwatch.Frequency;
-            if(controlDown==0||PasteLeadMs<25){RejectedPasteCount++;return true;}
-            PasteCount++;
+            PasteCount++;RejectedPasteCount++;return true; // Never read the user's clipboard in a keyboard fixture.
         }
         if(key==Keys.F6){OpenCount++;Input.Clear();Input.Focus();return true;}
         if(key==Keys.Enter){EnterCount++;Submitted=Input.Text;return true;}
@@ -99,6 +101,144 @@ static class UiTests {
             box.Press(Keys.Control|Keys.T,false);box.Press(Keys.Control|Keys.T,true);Check("translation shortcut rejects repeat",translate==1);
             box.SubmitKey=Keys.F8;box.Press(Keys.F8,false);box.Press(Keys.F8,true);Check("configured activation key submits once",submit==3);
             box.SubmitKey=Keys.Control|Keys.Enter;box.Press(Keys.Control|Keys.Enter,false);Check("Ctrl Enter activation also submits",submit==4);
+        }
+    }
+    static void InstalledModelPickerTests(){
+        var original=new Settings{Provider="Ollama",Model="unchanged-model"};
+        ContextMenuStrip menu=null;
+        using(var form=new SettingsForm(original,new KeyValuePair<string,string>[0])){
+            form.Show();var model=Get<TextBox>(form,"model");
+            var names=new[]{"maternion/hy-mt2:1.8b","fixture/other:latest"};
+            Call(form,"ShowInstalledModels",new object[]{names});menu=Get<ContextMenuStrip>(form,"installedModelsMenu");
+            Check("installed model picker shows all exact names",menu!=null&&menu.Items.Count==2&&menu.Items[0].Text==names[0]);
+            var item=menu.Items[0];
+            // WinForms can close the dropdown before dispatching the selected
+            // item's Click. This exact event order previously disposed the menu.
+            menu.Close(ToolStripDropDownCloseReason.ItemClicked);item.PerformClick();
+            Check("model selection survives close-before-click ordering",!menu.IsDisposed&&!item.IsDisposed&&model.Text==names[0]);
+            Call(form,"ShowInstalledModels",new object[]{new[]{"fixture/reloaded:latest","fixture/other:latest"}});
+            Check("reopening picker reuses owner and replaces stale items",ReferenceEquals(menu,Get<ContextMenuStrip>(form,"installedModelsMenu"))&&item.IsDisposed&&menu.Items.Count==2&&menu.Items[0].Text=="fixture/reloaded:latest");
+            menu.Close(ToolStripDropDownCloseReason.Keyboard);Check("cancelling model picker preserves selected model",model.Text==names[0]&&!menu.IsDisposed);
+            Call(form,"ShowInstalledModels",new object[]{names});item=menu.Items[1];Get<ComboBox>(form,"provider").SelectedItem="Google";string afterSwitch=model.Text;item.PerformClick();
+            Check("provider change dismisses picker and ignores late clicks",!menu.Visible&&model.Text==afterSwitch);
+            Check("model picker does not save original settings",original.Model=="unchanged-model"&&original.Provider=="Ollama");
+        }
+        Check("settings disposal releases the owned picker",menu.IsDisposed);
+    }
+    static async Task ChatUpdateTests(string output,SyntheticInputWindow target){
+        var taps=new List<string>();
+        foreach(bool submit in new[]{false,true}){
+            taps.Clear();await Native.EnterGameChat(Keys.Enter,submit,k=>{taps.Add("key:"+(int)k);return Task.FromResult(0);},()=>{taps.Add("text");return Task.FromResult(0);},ms=>Task.FromResult(0));
+            Check(submit?"normal send opens inserts and submits":"review opens and inserts without final Enter",string.Join(",",taps)==(submit?"key:13,text,key:13":"key:13,text"));
+        }
+        taps.Clear();try{await Native.EnterGameChat(Keys.F6,true,k=>{taps.Add(k.ToString());return Task.FromResult(0);},()=>{throw new InvalidOperationException("fixture");},ms=>Task.FromResult(0));}catch(InvalidOperationException){}
+        Check("text insertion failure never emits submission Enter",string.Join(",",taps)=="F6");
+        var settings=new Settings{Provider="Ollama",Model="fixture",Review=true,GameKey=(int)Keys.F6,LogDirectory=Path.Combine(output,"chat-update-logs")};
+        using(var form=new MainForm(new SettingsStore(Path.Combine(output,"chat-update-profile")),settings,false)){
+            var unused=form.Handle;Get<Translator>(form,"translator").Dispose();var fake=new ChatTranslationFixture();Put(form,"translator",new Translator(fake));
+            Get<System.Windows.Forms.Timer>(form,"renderTimer").Stop();
+            var game=Get<Room>(form,"gameRoom");Put(form,"gameWindow",target.Handle);Call(form,"SelectRoom",game);
+            string inserted=null;bool committed=true;int inputCalls=0;
+            form.GameInput=(window,key,text,release,submit)=>{inputCalls++;inserted=text;committed=submit;return Task.FromResult<string>(null);};
+            var overlay=Get<Overlay>(form,"overlay");overlay.SetInteractive(true,target.Handle);overlay.Compose.Text="안녕하세요";
+            await (Task)Call(form,"Submit",overlay.Compose,true);
+            Check("review routes translated text to game input with submit false",inputCalls==1&&inserted==fake.Reply&&!committed);
+            Check("review returns overlay to passive and clears app draft",!overlay.Interactive&&overlay.Compose.Text==""&&Get<Label>(form,"status").Text.Contains("게임 입력칸"));
+            settings.Review=false;overlay.SetInteractive(true,target.Handle);overlay.Compose.Text="안녕하세요";await (Task)Call(form,"Submit",overlay.Compose,true);
+            Check("normal send still commits in one activation",inputCalls==2&&committed);
+            settings.RoomTranslation["game"]=false;
+            var first=new ChatMessage{Handle="FirstPilot",Text="Meet at the station.",Translation="old translation"};
+            var second=new ChatMessage{Handle="SecondPilot",Text="Bring a medical ship.",Translation="leave this alone"};game.Messages.Add(first);game.Messages.Add(second);Call(form,"RenderTranscript");
+            await Get<Translator>(form,"translator").Translate(first.Text,"en","ko",settings.Translation());int count=fake.Requests;fake.Reply="fresh translation";
+            var retry=(Task)Call(form,"RetranslateMessage",game,first);
+            using(var menu=(ContextMenuStrip)Call(form,"CreateChatMenu",game,first,true))Check("retranslate disabled while this message is running",!menu.Items[menu.Items.Count-1].Enabled);
+            await retry;
+            Check("manual retranslate makes a new request and updates only selected chat",fake.Requests==count+1&&first.Translation=="fresh translation"&&second.Translation=="leave this alone"&&first.ManualTranslation);
+            Check("manual translation works while automatic room translation is off",Get<RichTextBox>(form,"transcript").Text.Contains("fresh translation"));
+            fake.Fail=true;try{await (Task)Call(form,"RetranslateMessage",game,first);}catch(TranslationException){}
+            Check("failed retry preserves old translation and permits next retry",first.Translation=="fresh translation"&&!first.Translating);
+            using(var menu=(ContextMenuStrip)Call(form,"CreateChatMenu",game,second,false))Check("message body menu offers retranslate",menu.Items.Count==1&&menu.Items[0].Text=="다시 번역");
+            Call(form,"Shutdown");
+        }
+        var rows=new[]{80f,20f,120f,40f,100f,60f}.Select(y=>new Overlay.OcrRenderRow{Origin=new PointF(12,y)}).ToList();Overlay.TiltBottomRows(rows);
+        Check("only four lowest rendered rows tilt regardless of list order",rows.Count(r=>r.Tilt)==4&&rows.All(r=>r.Tilt==(r.Origin.Y>=60)));
+        foreach(var row in rows)using(var matrix=Overlay.OcrRowTransform(row.Origin,row.Tilt)){
+            var points=new[]{new PointF(0,0),new PointF(500,0)};matrix.TransformPoints(points);
+            Check("row angle matches lower-four rule at "+row.Origin.Y,Math.Abs(points[0].Y-row.Origin.Y)<.001&&Math.Abs(points[1].Y-(row.Origin.Y-(row.Tilt?500*Math.Sin(.5*Math.PI/180):0)))<.001);
+        }
+        rows.RemoveRange(0,3);Overlay.TiltBottomRows(rows);Check("fewer than four visible rows all tilt",rows.All(r=>r.Tilt));
+        using(var overlay=new Overlay(new Settings{OcrFont=18,SpectrumFont=16})){
+            overlay.Size=new Size(700,430);overlay.OcrWidth=overlay.OcrViewport.Width;overlay.OcrHeight=overlay.OcrViewport.Height;
+            for(int i=0;i<6;i++){var message=new ChatMessage{Handle="Pilot"+i,Text="line "+i,Translation="번역문 "+(i+1)+" — 위 두 줄은 수평, 아래 네 줄만 기울입니다."};message.Lines.Add(new RectangleF(10,10+i*43,600,16));overlay.OcrMessages.Add(message);}
+            using(var image=RenderOverlayText(overlay,"DrawOcr"))image.Save(Path.Combine(output,"ocr-bottom-four-0316.png"));
+            var area=overlay.OcrViewport;var selected=overlay.MessageAt(new Point(area.Left+500,area.Top+10+3*43+16));
+            Check("OCR translation body resolves exact message for context menu",ReferenceEquals(selected,overlay.OcrMessages[3]));
+            Check("OCR footer is not a selectable chat",overlay.MessageAt(new Point(20,overlay.Height-20))==null);
+            overlay.IsGame=false;var latest=new ChatMessage{Handle="SpectrumPilot",Text="context menu fixture"};overlay.SpectrumMessages.Add(latest);
+            using(var image=RenderOverlayText(overlay,"DrawSpectrum")){}
+            Check("Spectrum overlay resolves message at rendered line",ReferenceEquals(overlay.MessageAt(new Point(area.Left+30,area.Bottom-20)),latest));
+            overlay.Interactive=true;bool called=false;overlay.HandleRequested+=p=>called=true;Call(overlay,"RequestHandle",new Point(20,60));Check("Spectrum input mode also supports context menus",called);
+        }
+    }
+    static async Task SearchInteractionTests(string output){
+        var root=Path.Combine(output,"ui-search-profile");var logDirectory=Path.Combine(output,"ui-search-logs");
+        Directory.CreateDirectory(logDirectory);
+        var settings=new Settings{LogDirectory=logDirectory,OcrEnabled=false};
+        using(var form=new MainForm(new SettingsStore(root),settings,false))using(var target=new SyntheticInputWindow()){
+            var unused=form.Handle;var targetHandle=target.Handle;
+            var rail=Get<RoomRail>(form,"sidebar");var transcript=Get<RichTextBox>(form,"transcript");var game=Get<Room>(form,"gameRoom");var home=Get<Room>(form,"homeRoom");
+            var rooms=Get<List<Room>>(form,"rooms");var room=new Room{Id="search-room",Name="Cargo reports",Type="private",HistoryInitialized=true};
+            for(int n=0;n<60;n++)room.Messages.Add(new ChatMessage{Handle="Pilot"+n.ToString("00"),Text="Fixture message "+n+(n==5||n==30||n==55?" needle included":" without match"),Time=new DateTime(2026,11,6,12,0,0).AddSeconds(n)});
+            rooms.Add(room);Call(form,"RefreshSidebar");Call(form,"SelectRoom",room);rail.SearchText="NEEDLE";
+            Check("search exposes matching chat count",rail.SearchResultCount==3&&rail.SearchResultIndex==0);
+            Check("search jumps to first matching chat",transcript.SelectionStart==transcript.Text.IndexOf("Pilot05",StringComparison.Ordinal));
+            Check("search arrow controls appear only with query",LocallyVisible(rail.Controls["PreviousSearch"])&&LocallyVisible(rail.Controls["NextSearch"]));
+            int match=transcript.Text.IndexOf("needle",StringComparison.Ordinal);transcript.Select(match,6);
+            Check("matching chat has yellow background",transcript.SelectionBackColor==Color.FromArgb(255,231,104));
+            typeof(Control).GetMethod("OnClick",Private).Invoke(rail.Controls["NextSearch"],new object[]{EventArgs.Empty});Check("next arrow advances one chat not one occurrence",rail.SearchResultIndex==1&&transcript.SelectionStart==transcript.Text.IndexOf("Pilot30",StringComparison.Ordinal));
+            Call(form,"NavigateSearch",1);Call(form,"NavigateSearch",1);Check("next wraps after final chat",rail.SearchResultIndex==0);
+            Call(form,"NavigateSearch",-1);Check("previous wraps to final chat",rail.SearchResultIndex==2);
+            int firstVisible=transcript.GetCharIndexFromPosition(new Point(2,2));room.Messages[55].Translation="A new translation";Call(form,"RenderTranscript");
+            Check("translation redraw preserves selected search result",rail.SearchResultIndex==2&&transcript.SelectionStart==transcript.Text.IndexOf("Pilot55",StringComparison.Ordinal));
+            Check("translation redraw preserves search viewport",Math.Abs(firstVisible-transcript.GetCharIndexFromPosition(new Point(2,2)))<3);
+            Call(form,"SelectRoom",home);Call(form,"SelectRoom",room);Check("entering filtered room jumps to matching chat",rail.SearchResultIndex==0&&transcript.SelectionStart==transcript.Text.IndexOf("Pilot05",StringComparison.Ordinal));
+            rail.SearchText="Cargo reports";Check("room-name-only search has no false message highlights",rail.SearchResultCount==0&&!rail.Controls["NextSearch"].Enabled);
+            rail.SearchText="";Check("clearing query hides arrows and clears result count",!LocallyVisible(rail.Controls["PreviousSearch"])&&rail.SearchResultCount==0);
+            transcript.Select(match,6);Check("clearing query removes yellow highlighting",transcript.SelectionBackColor==Theme.Bg);
+            var saved=new ChatMessage{Handle="ArchivePilot",Text="historical needle fixture",Time=new DateTime(2026,11,5,11,0,0)};
+            Get<OcrLog>(form,"log").Append(saved);game.Messages.Add(saved);
+            string escaped="{\"time\":\"2026-11-05T10:00:00+09:00\",\"handle\":\"KoreanPilot\",\"text\":\"\\uac80\\uc0c9\\uc5b4 stored\"}";
+            File.AppendAllText(Path.Combine(logDirectory,"StarChat-OCR-2026-11-05.txt"),escaped+Environment.NewLine+"malformed fixture"+Environment.NewLine);
+            rail.SearchText="historical needle";await (Task)Call(form,"SearchOcrLogs");Call(form,"SelectRoom",game);
+            Check("stored OCR match is rendered and navigable",transcript.Text.Contains(saved.Text)&&rail.SearchResultCount==1);
+            Check("stored and in-memory copy deduplicated",transcript.Text.Split(new[]{saved.Text},StringSplitOptions.None).Length==2);
+            rail.SearchText="검색어";await (Task)Call(form,"SearchOcrLogs");
+            Check("stored OCR search decodes escaped Unicode",transcript.Text.Contains("검색어 stored")&&rail.SearchResultCount==1);
+            Check("historical search never changes live OCR message list",game.Messages.Count==1);
+            rail.SearchText="";Call(form,"RenderTranscript");transcript.Select(0,0);transcript.ScrollToCaret();
+            Point handlePoint=transcript.GetPositionFromCharIndex(1);handlePoint.Offset(1,3);
+            Check("app OCR transcript resolves clicked handle",(string)Call(form,"TranscriptHandleAt",handlePoint)=="ArchivePilot");
+            Point bodyPoint=transcript.GetPositionFromCharIndex(transcript.Text.IndexOf(saved.Text,StringComparison.Ordinal)+2);bodyPoint.Offset(1,3);
+            Check("body right click is not mistaken for an ID",Call(form,"TranscriptHandleAt",bodyPoint)==null);
+            var mouseUp=typeof(Control).GetMethod("OnMouseUp",Private);mouseUp.Invoke(transcript,new object[]{new MouseEventArgs(MouseButtons.Right,1,handlePoint.X,handlePoint.Y,0)});
+            var menu=Get<ContextMenuStrip>(form,"handleMenu");Check("main OCR right click opens shared ID menu",menu!=null&&menu.Items[0].Text=="OCR ID: ArchivePilot"&&menu.Items[2].Enabled);if(menu!=null)menu.Close();
+            var spectrum=Get<Spectrum>(form,"spectrum");spectrum.LoggedIn=true;
+            using(var loggedMenu=(ContextMenuStrip)Call(form,"CreateHandleMenu","ArchivePilot"))Check("app ID menu permits friend add after login",loggedMenu.Items[3].Enabled);
+            spectrum.LoggedIn=false;
+            // Exercise the game connection transition without showing MainForm
+            // (which would start production timers) or probing any game process.
+            typeof(Control).GetMethod("SetState",Private).Invoke(form,new object[]{2,true});
+            Call(form,"UpdateGameConnection",targetHandle,"owned fixture");Check("game attach preserves main-window visibility",LocallyVisible(form));
+            Call(form,"UpdateGameConnection",IntPtr.Zero,"");Check("game detach preserves main-window visibility",LocallyVisible(form));
+            rail.SearchText="needle";await (Task)Call(form,"SearchOcrLogs");Call(form,"SelectRoom",room);
+            // Explicitly remove the production Shown handler before showing this
+            // owned fixture: no hooks, game detection, providers, or launch actions.
+            typeof(Control).GetMethod("SetState",Private).Invoke(form,new object[]{2,false});
+            object shownKey=typeof(Form).GetField("EVENT_SHOWN",BindingFlags.Static|BindingFlags.NonPublic).GetValue(null);
+            var eventList=(System.ComponentModel.EventHandlerList)typeof(System.ComponentModel.Component).GetProperty("Events",Private).GetValue(form,null);
+            eventList.RemoveHandler(shownKey,eventList[shownKey]);form.Show();
+            await (Task)typeof(MainForm).GetMethod("CaptureOwnUi",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{form,Path.Combine(output,"search-navigation-0315.png")});
+            Call(form,"Shutdown");
         }
     }
     static async Task MainFormTests(string output) {
@@ -397,7 +537,36 @@ static class UiTests {
             }
         }
     }
-    static async Task InputTest(SyntheticInputWindow window) {
+    static void BatchStructureTests(){
+        IntPtr layout=InputLanguage.CurrentInputLanguage.Handle;
+        var batch=Native.BuildTextBatch("Ab!? Zz vV 123",layout,false);int calls=0;
+        Native.SendTextBatch(batch,items=>{calls++;Check("one batch contains the full prepared message",ReferenceEquals(items,batch));return (uint)items.Length;});
+        Check("body dispatch makes exactly one native call",calls==1);
+        Check("English letters and punctuation use scan codes",batch.All(k=>k.type==1&&k.data.keyboard.vk==0&&(k.data.keyboard.flags&8)!=0));
+        foreach(bool caps in new[]{false,true}){
+            var upper=Native.BuildTextBatch("A",layout,caps);var lower=Native.BuildTextBatch("a",layout,caps);
+            Check("CapsLock compensates alphabetic Shift: "+caps,upper.Length==(caps?2:4)&&lower.Length==(caps?4:2));
+        }
+        var unicode=Native.BuildTextBatch("ā한😊",layout,false);
+        Check("non-ASCII UTF16 is preserved as paired Unicode events",unicode.Length==8&&unicode.Where((k,i)=>i%2==0).Select(k=>(char)k.data.keyboard.scan).SequenceEqual("ā한😊")&&unicode.Select((k,i)=>k.data.keyboard.flags==(i%2==0?4u:6u)).All(x=>x));
+        // Exercise every possible truncation; no retry may repeat any key-down.
+        for(int accepted=0;accepted<batch.Length;accepted++){
+            int callCount=0;Native.Input[] cleanup=null;bool threw=false;
+            try{Native.SendTextBatch(batch,items=>{callCount++;if(callCount==1)return (uint)accepted;cleanup=items;return (uint)items.Length;});}catch(InvalidOperationException){threw=true;}
+            var held=new HashSet<string>();
+            Func<Native.Input,string> identity=k=>k.data.keyboard.vk+":"+k.data.keyboard.scan+":"+(k.data.keyboard.flags&~2u);
+            foreach(var item in batch.Take(accepted)){if((item.data.keyboard.flags&2)==0)held.Add(identity(item));else held.Remove(identity(item));}
+            bool releases=held.Count==0?cleanup==null:cleanup!=null&&cleanup.All(k=>(k.data.keyboard.flags&2)!=0)&&held.SetEquals(cleanup.Select(identity));
+            Check("partial batch releases exactly accepted held keys without retry: "+accepted,threw&&callCount==(held.Count==0?1:2)&&releases);
+        }
+        foreach(string invalid in new[]{"x\ny","x\ry","x\ty","x\by","x\0y",new string('x',2001)}){
+            bool rejected=false;try{Native.BuildTextBatch(invalid,layout,false);}catch(InvalidOperationException){rejected=true;}
+            Check("unsafe control or oversized body rejected before injection: "+invalid.Length+"/"+(int)invalid[1],rejected);
+        }
+        Check("2000-character message is prepared in one array",Native.BuildTextBatch(new string('x',2000),layout,false).Length==4000);
+    }
+    static async Task InputTest(SyntheticInputWindow window,bool batchOnly=false) {
+        BatchStructureTests();
         ShowWindow(window.Handle,5);
         FocusFixture(window.Handle,(uint)Process.GetCurrentProcess().Id);window.Activate();window.Input.Focus();await Task.Delay(150);
         uint owner;GetWindowThreadProcessId(window.Handle,out owner);
@@ -407,28 +576,20 @@ static class UiTests {
         }
         var inputType=typeof(Native).GetNestedType("Input",BindingFlags.NonPublic);
         Check("x64 SendInput ABI size is 40",Marshal.SizeOf(inputType)==40);
-        const string expected="Hello Star Citizen! 한글 123";
+        uint clipboardSequence=Native.GetClipboardSequenceNumber();
+        const string expected="Hello Star Citizen! San'tok.yāi 한글 😊 123";
         await Native.SendGame(window.Handle,Keys.F6,expected);
         await Task.Delay(200);
         Check("synthetic opening key delivered once",window.OpenCount==1);
         Check("synthetic unicode text exactly preserved",window.Submitted==expected,"Synthetic result: "+window.Submitted);
         Check("synthetic final Enter delivered once",window.EnterCount==1);
-        Check("game text inserted by one paste and one text change",window.PasteCount==1&&window.TextChanges==1);
-        Check("reference paste waits between modifier and V events",window.PasteLeadMs>=25&&window.PasteReleaseMs>=25,"leadMs="+window.PasteLeadMs.ToString("F1")+", releaseMs="+window.PasteReleaseMs.ToString("F1"));
-        string beforeRejected=window.Input.Text;
-        TapOwned(window.Handle,(uint)Process.GetCurrentProcess().Id,Keys.Control|Keys.V);await Task.Delay(100);
-        Check("timing fixture rejects original simultaneous Ctrl V",window.RejectedPasteCount==1&&window.Input.Text==beforeRejected);
-        var previousClipboard=Native.PasteClipboard.Snapshot();const string marker="StarChat clipboard fixture";
-        try{
-            var data=new DataObject();data.SetText(marker);data.SetData(DataFormats.Html,"<b>StarChat fixture</b>");
-            using(var fixtureImage=new Bitmap(12,9)){fixtureImage.SetPixel(0,0,Color.Cyan);data.SetImage(fixtureImage);Clipboard.SetDataObject(data,true);}
-            var lease=await Native.PasteClipboard.Create("temporary fixture");await lease.Restore();
-            string restoredHtml=Clipboard.GetData(DataFormats.Html) as string;
-            Check("paste restores text and rich clipboard formats",Clipboard.GetText()==marker&&restoredHtml!=null&&restoredHtml.Contains("<b>StarChat fixture</b>"),"textMatches="+(Clipboard.GetText()==marker)+", htmlPresent="+(restoredHtml!=null)+", fixtureHtml="+(restoredHtml!=null&&restoredHtml.Contains("<b>StarChat fixture</b>")));
-            using(var restoredImage=Clipboard.GetImage())Check("paste restores clipboard image",restoredImage!=null&&restoredImage.Width==12&&restoredImage.Height==9);
-            lease=await Native.PasteClipboard.Create("temporary fixture");Clipboard.SetText(marker);uint copiedSequence=Native.GetClipboardSequenceNumber();bool changed=!lease.IsCurrent;await lease.Restore();
-            Check("paste detects and never replaces a newer clipboard copy",changed&&Native.GetClipboardSequenceNumber()==copiedSequence&&Clipboard.GetText()==marker);
-        }finally{if(Clipboard.ContainsText()&&(Clipboard.GetText()==marker||Clipboard.GetText()=="temporary fixture")){if(previousClipboard==null)Clipboard.Clear();else Clipboard.SetDataObject(previousClipboard,true);}}
+        string printable=new string(Enumerable.Range(32,95).Select(c=>(char)c).ToArray())+" aAazZZ vvV 1122";
+        await Native.SendGame(window.Handle,Keys.F6,printable,Keys.Enter,false);await Task.Delay(150);
+        Check("all printable ASCII and repeated keys survive one batch",window.Input.Text==printable,"Synthetic result: "+window.Input.Text);
+        Check("review opens input without a final Enter",window.OpenCount==2&&window.EnterCount==1&&window.Submitted==expected);
+        Check("scan batch never attempts Ctrl V",window.PasteCount==0&&window.RejectedPasteCount==0);
+        Check("send and review never modify clipboard",Native.GetClipboardSequenceNumber()==clipboardSequence);
+        if(batchOnly)return;
         using(var overlay=new Overlay(new Settings{ActivationKey=(int)Keys.F8})){
             overlay.Show();overlay.SetInteractive(true);await Task.Delay(100);
             Check("overlay input receives foreground and focus",Native.GetForegroundWindow()==overlay.Handle&&overlay.Compose.Focused);
@@ -477,8 +638,8 @@ static class UiTests {
             Check("full send pipeline starts with overlay focused",overlay.InputFocused);
             int opened=Native.SendMessage(target,0x8005,IntPtr.Zero,IntPtr.Zero).ToInt32();
             await (Task)Call(form,"Submit",overlay.Compose,true);
-            Check("translated preview stays in overlay and sends no game keys",overlay.Interactive&&overlay.Compose.Text=="안녕하세요"&&Native.SendMessage(target,0x8005,IntPtr.Zero,IntPtr.Zero).ToInt32()==opened);
-            await (Task)Call(form,"Submit",overlay.Compose,true);
+            Check("translated review fills game input and returns passive",!overlay.Interactive&&overlay.Compose.Text==""&&Native.SendMessage(target,0x8005,IntPtr.Zero,IntPtr.Zero).ToInt32()==opened+1&&Native.SendMessage(target,0x8001,IntPtr.Zero,IntPtr.Zero).ToInt32()=="Hello Star Citizen!".Length);
+            typeof(Native).GetMethod("Tap",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{Keys.Enter});await Task.Delay(100);
             int hash=17;foreach(char c in "Hello Star Citizen!")hash=unchecked(hash*31+c);
             Check("translated overlay text reaches separate process exactly",Native.SendMessage(target,0x8006,IntPtr.Zero,IntPtr.Zero).ToInt32()==hash);
             Check("full send opens game chat once then returns transparent",Native.SendMessage(target,0x8005,IntPtr.Zero,IntPtr.Zero).ToInt32()==opened+1&&!overlay.Interactive&&overlay.Compose.TextLength==0);
@@ -537,16 +698,16 @@ static class UiTests {
         Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
         if(args.Length==2&&args[0]=="--input-child"){using(var child=new SyntheticInputWindow()){child.Shown+=(s,e)=>File.WriteAllText(args[1],child.Handle.ToInt64().ToString());Application.Run(child);}return;}
         var output=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"test-output");Directory.CreateDirectory(output);
-        bool renderSettings=args.Contains("--render-settings");
-        string reportPath=Path.Combine(output,renderSettings?"ui-render-tests.json":"ui-tests.json");
+        bool renderSettings=args.Contains("--render-settings"),searchOnly=args.Contains("--search-ui"),chatUpdates=args.Contains("--chat-updates"),batchInput=args.Contains("--batch-input");
+        string reportPath=Path.Combine(output,batchInput?"ui-batch-input-tests.json":chatUpdates?"ui-chat-update-tests.json":searchOnly?"ui-search-tests.json":renderSettings?"ui-render-tests.json":"ui-tests.json");
         // A native Windows failure must never leave yesterday's report looking current.
         if(File.Exists(reportPath))File.Delete(reportPath);
         using(var window=new SyntheticInputWindow()) {
             window.Shown+=async(s,e)=>{
-                try{ComposerTests();if(!renderSettings)await MainFormTests(output);SettingsTests(output);ReleaseFeatureTests(output);if(!renderSettings)await SplitOverlayTests(output,window);OverlayRenderingTests(output);if(!renderSettings){File.WriteAllText(Path.Combine(output,"ui-stage.txt"),"InputTest: Windows clipboard / owned keyboard fixture");await InputTest(window);await CrossProcessActivationTest(window);}}
+                try{if(batchInput){await InputTest(window,true);}else if(chatUpdates){await ChatUpdateTests(output,window);}else if(searchOnly){InstalledModelPickerTests();await SearchInteractionTests(output);}else{ComposerTests();if(!renderSettings)await MainFormTests(output);SettingsTests(output);ReleaseFeatureTests(output);if(!renderSettings)await SplitOverlayTests(output,window);OverlayRenderingTests(output);if(!renderSettings){File.WriteAllText(Path.Combine(output,"ui-stage.txt"),"InputTest: scan-code batch / owned keyboard fixture");await InputTest(window);await CrossProcessActivationTest(window);}}}
                 catch(Exception ex){Check("unexpected test exception",false,ex.ToString());}
                 finally {
-                    File.WriteAllText(reportPath,Json.New().Serialize(new {passed=failures==0,failures,checks=Results,realApiCalls=0,gameProcessesAccessed=false,injectionTarget=renderSettings?"none":"owned synthetic WinForms window only"}));
+                    File.WriteAllText(reportPath,Json.New().Serialize(new {passed=failures==0,failures,checks=Results,realApiCalls=0,gameProcessesAccessed=false,injectionTarget=renderSettings||searchOnly||chatUpdates?"none":"owned synthetic WinForms window only"}));
                     Environment.ExitCode=failures==0?0:1;window.Close();
                 }
             };

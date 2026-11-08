@@ -2,10 +2,38 @@
 # Copyright (C) 2026 StarChat contributors
 """NLLB-200 distilled-600M: CPU INT8, four threads, one translation at a time."""
 import json
+import math
 from pathlib import Path
 import re
 import ctranslate2
 import sentencepiece as spm
+
+# Local translation tuning. Save this file and fully restart StarChat to reload
+# the worker and clear completed/fuzzy translation caches. No rebuild is needed.
+BEAM_SIZE = 2
+REPETITION_PENALTY = 1.1
+MAX_DECODING_LENGTH = 150
+NO_REPEAT_NGRAM_SIZE = 3
+DISABLE_UNK = True
+MIN_LENGTH_INPUT_TOKENS = 5
+MIN_OUTPUT_RATIO = 0.9
+
+_GAME_TERMS = re.compile(r'\b(?:dog\s*fighting|dog\s*fight|strafing|strafe|ty|np)\b', re.IGNORECASE)
+_EXPANSIONS = {'ty': 'thank you', 'np': 'no problem',
+               'dogfighting': 'aerial combat', 'dogfight': 'aerial combat',
+               'strafe': 'move sideways', 'strafing': 'moving sideways'}
+
+
+def expand_game_terms(text):
+    return _GAME_TERMS.sub(lambda m: _EXPANSIONS[re.sub(r'\s+', '', m[0].lower())], text)
+
+
+def minimum_decoding_length(input_tokens):
+    if input_tokens < MIN_LENGTH_INPUT_TOKENS:
+        return 1  # Keep CT2's default for short messages.
+    # CT2 counts the forced target-language prefix in its returned sequence.
+    # Add that one token so it cannot satisfy part of the minimum text length.
+    return min(MAX_DECODING_LENGTH - 1, math.ceil(input_tokens * MIN_OUTPUT_RATIO) + 1)
 
 # ISO codes used by app settings / py3langid -> NLLB language+script tags.
 LANGUAGES = dict(en='eng_Latn', ko='kor_Hang', ja='jpn_Jpan', zh='zho_Hans',
@@ -64,18 +92,27 @@ class Engine:
         return tag
 
     def translate(self, text, source, target):
+        original = text
+        source_hint = source.lower().replace('_', '-')
+        if (source_hint in {'en', 'eng-latn'} or source_hint.startswith('en-')
+                or (source_hint == 'auto' and not any(c.isalpha() and ord(c) > 127 for c in text))):
+            # Expand before language detection/tokenization so terse English
+            # game chat is not misclassified because of its abbreviations.
+            text = expand_game_terms(text)
         source = self.language(source, text)
         target = self.language(target)
         if source == target or not any(c.isalpha() for c in text):
-            return text
+            return original
         pieces = self.sp.encode(text, out_type=str)
         if len(pieces) > 256:
             raise ValueError('too_long')
         # NLLB's current tokenizer convention: language prefix, text, EOS.
         # CTranslate2 Transformers conversions do not insert source specials.
         results = self.translator.translate_batch([[source] + pieces + ['</s>']],
-            target_prefix=[[target]], beam_size=2, max_decoding_length=150,
-            repetition_penalty=1.2, no_repeat_ngram_size=3,
+            target_prefix=[[target]], beam_size=BEAM_SIZE, max_decoding_length=MAX_DECODING_LENGTH,
+            min_decoding_length=minimum_decoding_length(len(pieces)),
+            repetition_penalty=REPETITION_PENALTY, no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+            disable_unk=DISABLE_UNK,
             max_input_length=0, return_end_token=True)
         tokens = results[0].hypotheses[0]
         if not tokens or tokens[-1] != '</s>':

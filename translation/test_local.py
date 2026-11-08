@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import runtime
-from engine import Engine
+from engine import Engine, expand_game_terms, minimum_decoding_length
 
 
 class InstallerTests(unittest.TestCase):
@@ -98,10 +98,12 @@ class DecodingTests(unittest.TestCase):
         tags=['eng_Latn','kor_Hang','jpn_Jpan','zho_Hans','zho_Hant','deu_Latn','fra_Latn','spa_Latn']
         (self.root/'shared_vocabulary.json').write_text(json.dumps(tags))
         self.tokens=['▁hello'];self.output=['kor_Hang','▁안녕','</s>']
-        self.calls=[];self.loads=[]
+        self.calls=[];self.loads=[];self.encoded=[]
         owner=self
         class Tokenizer:
-            def encode(self,text,out_type):return list(owner.tokens)
+            def encode(self,text,out_type):
+                owner.encoded.append(text)
+                return list(owner.tokens)
             def decode(self,pieces):return '|'.join(pieces)
         class Translator:
             def __init__(self,path,**kwargs):owner.loads.append(kwargs)
@@ -124,7 +126,33 @@ class DecodingTests(unittest.TestCase):
         self.assertEqual(result,'▁안녕')
         batch,options=self.calls[0]
         self.assertEqual(batch,[['eng_Latn','▁hello','</s>']])
-        self.assertEqual(options,dict(target_prefix=[['kor_Hang']],beam_size=2,max_decoding_length=150,repetition_penalty=1.2,no_repeat_ngram_size=3,max_input_length=0,return_end_token=True))
+        self.assertEqual(options,dict(target_prefix=[['kor_Hang']],beam_size=4,max_decoding_length=150,
+            min_decoding_length=1,repetition_penalty=1.05,no_repeat_ngram_size=3,disable_unk=True,max_input_length=0,return_end_token=True))
+
+    def test_half_input_minimum_excludes_special_tokens_and_rounds_up(self):
+        for count,expected in [(1,1),(4,1),(5,4),(6,4),(7,5),(255,129),(256,129)]:
+            with self.subTest(count=count):
+                self.tokens=['\u2581word']*count
+                self.engine.translate('words','en','ko')
+                self.assertEqual(self.calls[-1][1]['min_decoding_length'],expected)
+                if count>=5:
+                    self.assertGreaterEqual((expected-1)*2,count)  # remove forced language prefix
+
+    def test_english_game_terms_are_expanded_before_tokenization(self):
+        self.engine.translate('TY for dog fighting, np; strafe while strafing.','en','ko')
+        self.assertEqual(self.encoded,['thank you for aerial combat, no problem; move sideways while moving sideways.'])
+
+    def test_auto_language_detection_sees_expanded_english(self):
+        original_language=self.engine.language
+        with patch.object(self.engine,'language',side_effect=lambda lang,text='':
+                original_language('en' if lang=='auto' else lang,text)) as language:
+            self.engine.translate('ty for dogfight','auto','ko')
+        self.assertEqual(language.call_args_list[0].args,('auto','thank you for aerial combat'))
+
+    def test_expansion_does_not_rewrite_same_language_or_non_english_source(self):
+        self.assertEqual(self.engine.translate('ty np','en','en'),'ty np')
+        self.engine.translate('ty','fr','ko')
+        self.assertEqual(self.encoded,['ty'])
 
     def test_supported_ui_language_codes_and_cjk_detection(self):
         for source,tag in [('en','eng_Latn'),('ko','kor_Hang'),('ja','jpn_Jpan'),('zh-CN','zho_Hans'),('zh-TW','zho_Hant'),('de','deu_Latn'),('fr','fra_Latn'),('es','spa_Latn')]:
@@ -147,6 +175,19 @@ class DecodingTests(unittest.TestCase):
     def test_decoding_limit_without_eos_cannot_send_partial(self):
         self.output=['kor_Hang']+['▁word']*149
         with self.assertRaisesRegex(ValueError,'too_long'):self.engine.translate('long','en','ko')
+
+
+class GameTermTests(unittest.TestCase):
+    def test_all_spellings_case_and_whitespace(self):
+        for term in ['dog fighting','dog fight','dogfighting','dogfight','DOG FIGHT','dog\tFIGHTING']:
+            with self.subTest(term=term):
+                self.assertEqual(expand_game_terms('Try '+term+'!'),'Try aerial combat!')
+        self.assertEqual(expand_game_terms('ty NP strafe Strafing'),'thank you no problem move sideways moving sideways')
+
+    def test_complete_words_only_and_middle_of_sentence(self):
+        text='typical npcs dogfighter strafingRun pilot_ty tycoon'
+        self.assertEqual(expand_game_terms(text),text)
+        self.assertEqual(expand_game_terms('please strafe, ty pilot'),'please move sideways, thank you pilot')
 
 
 if __name__=='__main__':

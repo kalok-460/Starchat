@@ -20,6 +20,7 @@ namespace StarChat
         private CheckBox deepLFree, review, notifications, ocrEnabled, spectrumEnabled;
         private readonly Dictionary<Control,Control> rowLabels=new Dictionary<Control,Control>();
         private Control ollamaRow, localInstall;
+        private ContextMenuStrip installedModelsMenu;
         private NumericUpDown[] ocrPosition,spectrumPosition;
         private NumericUpDown interval, keepDays, spectrumFont, ocrFont, translationOffset;
         private KeyCaptureBox activation, game, translate;
@@ -122,12 +123,10 @@ namespace StarChat
                 try {
                     status.Text = L.T("설치된 모델을 확인하고 있습니다.");
                     var names = await Translator.OllamaModels(ollamaUrl.Text.Trim());
-                    if (IsDisposed || editingProvider != "Ollama") return;
+                    if (IsDisposed || Disposing || !IsHandleCreated || editingProvider != "Ollama") return;
                     if (names.Length == 0) { status.Text = L.T("Ollama에 설치된 모델이 없습니다."); return; }
                     if (names.Length == 1) { model.Text = names[0]; status.Text = L.T("설치 모델을 선택했습니다. 저장하면 적용됩니다."); return; }
-                    var menu = new ContextMenuStrip();
-                    foreach (string name in names) { string choice = name; menu.Items.Add(choice, null, (s,e) => model.Text = choice); }
-                    menu.Closed += (s,e) => menu.Dispose(); menu.Show(model, new Point(0, model.Height));
+                    ShowInstalledModels(names);
                     status.Text = L.T("사용할 모델을 선택하세요.");
                 } catch (TranslationException ex) { if (!IsDisposed) status.Text = ex.Message; }
             });Row(p,L.T("Ollama 서버"),ollamaRow);
@@ -138,8 +137,37 @@ namespace StarChat
             provider.SelectionChangeCommitted+=delegate{if(Convert.ToString(provider.SelectedItem)=="Local"&&!LocalModel.Installed){draft.LocalInstallPrompted=true;draft.LocalModelPrompted=LocalModel.Identity;LocalModelDialog.Offer(this);}};
             provider.SelectedItem = provider.Items.Contains(draft.Provider) ? draft.Provider : "Local";
         }
+        private void ShowInstalledModels(string[] names)
+        {
+            if (IsDisposed || Disposing || !IsHandleCreated || editingProvider != "Ollama") return;
+            // ToolStrip can raise Closed before the selected item's Click finishes.
+            // Keep this one menu owned by the settings window; never dispose it in Closed.
+            if (installedModelsMenu == null) installedModelsMenu = new ContextMenuStrip();
+            installedModelsMenu.Close();
+            while (installedModelsMenu.Items.Count > 0) installedModelsMenu.Items[0].Dispose();
+            foreach (string name in names)
+            {
+                string choice = name;
+                installedModelsMenu.Items.Add(choice, null, delegate {
+                    if (IsDisposed || Disposing || editingProvider != "Ollama") return;
+                    model.Text = choice;
+                    status.Text = L.T("설치 모델을 선택했습니다. 저장하면 적용됩니다.");
+                });
+            }
+            installedModelsMenu.Show(model, new Point(0, model.Height));
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && installedModelsMenu != null)
+            {
+                installedModelsMenu.Dispose();
+                installedModelsMenu = null;
+            }
+            base.Dispose(disposing);
+        }
         private void ChangeProvider()
         {
+            if (installedModelsMenu != null) installedModelsMenu.Close();
             if (editingProvider != null)
             {
                 draft.ProviderKeys[editingProvider] = apiKey.Text;

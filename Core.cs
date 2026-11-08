@@ -237,5 +237,24 @@ sealed class OcrLog {
         }
         return found.Count==0?L.T("검색 결과 없음"):string.Join(Environment.NewLine,found);
     }
+    public List<ChatMessage> SearchMessages(string query) {
+        var found=new List<ChatMessage>();
+        if(string.IsNullOrWhiteSpace(query)||!Directory.Exists(settings.LogDirectory))return found;
+        foreach(string file in Directory.EnumerateFiles(settings.LogDirectory,"StarChat-OCR-*.txt").OrderByDescending(x=>x)) {
+            if(!Regex.IsMatch(Path.GetFileName(file),@"^StarChat-OCR-\d{4}-\d{2}-\d{2}\.txt$") || (File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)continue;
+            int lineNumber=0;
+            foreach(string line in File.ReadLines(file,Encoding.UTF8)) {
+                lineNumber++;if(line.Length>100000)continue;
+                try {
+                    var row=Json.New().DeserializeObject(line);string text=Json.Str(row,"text"),handle=Json.Str(row,"handle");DateTime time;
+                    if(text.IndexOf(query,StringComparison.OrdinalIgnoreCase)<0&&handle.IndexOf(query,StringComparison.OrdinalIgnoreCase)<0)continue;
+                    if(!DateTime.TryParse(Json.Str(row,"time"),CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out time))continue;
+                    found.Add(new ChatMessage{Id="ocr-log:"+Path.GetFileName(file)+":"+lineNumber,Time=time,Handle=handle,Text=text,Channel=Json.Str(row,"channel")});
+                    if(found.Count>=300)return found;
+                }catch(ArgumentException){}catch(InvalidOperationException){}
+            }
+        }
+        return found;
+    }
 }
 }

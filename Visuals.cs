@@ -193,7 +193,8 @@ namespace StarChat
 
         private readonly TextBox search;
 
-        private readonly RoundedButton settings, add;
+        private readonly RoundedButton settings, add, previousSearch, nextSearch;
+        private readonly ToolTip searchTips=new ToolTip{InitialDelay=350};
         private readonly RoundedPanel searchBox;
         private readonly RailCanvas canvas;
         private float scale = 1;
@@ -205,6 +206,9 @@ namespace StarChat
         public bool OcrEnabled {get{return ocrEnabled;}set{ocrEnabled=value;if(canvas!=null)canvas.Invalidate();}}
         public bool SpectrumEnabled {get{return spectrumEnabled;}set{spectrumEnabled=value;if(canvas!=null)canvas.Invalidate();}}
         public event Action<string> SearchRequested;
+        public event Action<int> SearchNavigated;
+        public int SearchResultIndex {get;private set;}
+        public int SearchResultCount {get;private set;}
         public event Action SettingsRequested;
         public event Action AddRoomRequested;
         public string SelectedId { get { return canvas.Selected; } set { canvas.Selected = value ?? ""; canvas.Invalidate(); } }
@@ -217,8 +221,8 @@ namespace StarChat
             searchBox = new RoundedPanel { Radius = 15, BackColor = DesignPalette.Card, Padding = new Padding(14, 10, 10, 10) };
             search = new HintTextBox { Hint = L.T("검색"), BorderStyle = BorderStyle.None, BackColor = DesignPalette.Card, ForeColor = DesignPalette.Text, AccessibleName = L.T("채팅방 이름 및 대화 내용 검색"), AccessibleDescription = L.T("불러온 Spectrum 대화와 저장된 OCR 기록에서 해당하는 채팅방을 찾습니다.") };
 
-            search.KeyDown += delegate(object s, KeyEventArgs e) { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; if (SearchRequested != null) SearchRequested(search.Text.Trim()); } };
-            search.TextChanged += delegate { if (SearchRequested != null) SearchRequested(search.Text.Trim()); };
+            search.KeyDown += delegate(object s, KeyEventArgs e) { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; if (SearchNavigated != null) SearchNavigated(e.Shift?-1:1); } };
+            search.TextChanged += delegate { if(canvas!=null)LayoutParts();if (SearchRequested != null) SearchRequested(search.Text.Trim()); };
             searchBox.Controls.Add(search);
             searchBox.Paint += delegate(object sender, PaintEventArgs e) {
                 using (var pen = new Pen(DesignPalette.Muted, 2 * scale)) {
@@ -232,15 +236,29 @@ namespace StarChat
             add = new RoundedButton { Text = L.T("+   채팅방 추가"), Font = new Font("맑은 고딕", 12, FontStyle.Bold), Radius = 23 };
             add.Click += delegate { if (AddRoomRequested != null) AddRoomRequested(); };
             canvas = new RailCanvas(this) { BackColor = BackColor };
-            Controls.Add(searchBox); Controls.Add(settings); Controls.Add(canvas); Controls.Add(add);
+            previousSearch=new RoundedButton{Text="↑",Font=new Font("Segoe UI Symbol",13),AccessibleName=L.T("이전 검색 결과"),Name="PreviousSearch",Visible=false,Enabled=false};
+            nextSearch=new RoundedButton{Text="↓",Font=new Font("Segoe UI Symbol",13),AccessibleName=L.T("다음 검색 결과"),Name="NextSearch",Visible=false,Enabled=false};
+            previousSearch.Click+=delegate {if(SearchNavigated!=null)SearchNavigated(-1);};nextSearch.Click+=delegate {if(SearchNavigated!=null)SearchNavigated(1);};
+            Controls.Add(searchBox); Controls.Add(settings); Controls.Add(previousSearch);Controls.Add(nextSearch);Controls.Add(canvas); Controls.Add(add);
+            SetSearchResults(-1,0);
         }
+        public void SetSearchResults(int index,int count){
+            SearchResultIndex=index;SearchResultCount=count;previousSearch.Enabled=nextSearch.Enabled=count>0;
+            string position=count>0?" ("+(index+1)+"/"+count+")":"";
+            searchTips.SetToolTip(previousSearch,L.T("이전 검색 결과")+position);searchTips.SetToolTip(nextSearch,L.T("다음 검색 결과")+position);
+            previousSearch.AccessibleDescription=nextSearch.AccessibleDescription=count>0?(index+1)+"/"+count:L.T("검색 결과 없음");
+        }
+        protected override void Dispose(bool disposing){if(disposing)searchTips.Dispose();base.Dispose(disposing);}
         protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); using (var g = CreateGraphics()) scale = g.DpiX / 96f; LayoutParts(); }
         protected override void OnResize(EventArgs e) { base.OnResize(e); if (canvas != null) LayoutParts(); }
         private void LayoutParts()
         {
             int pad = S(16), gap = S(10), top = S(18), header = S(46), footer = S(48);
             settings.SetBounds(Math.Max(pad, Width - pad - header), top, header, header);
-            searchBox.SetBounds(pad, top, Math.Max(S(100), Width - pad * 2 - header - gap), header);
+            bool searching=search.Text.Trim().Length>0;int navigation=searching?S(58):0;
+            previousSearch.Visible=nextSearch.Visible=searching;
+            previousSearch.SetBounds(settings.Left-gap-navigation,top,S(27),header);nextSearch.SetBounds(previousSearch.Right+S(3),top,S(27),header);
+            searchBox.SetBounds(pad, top, Math.Max(S(95), Width - pad * 2 - header - gap-navigation-(searching?S(5):0)), header);
             search.SetBounds(S(42), S(12), Math.Max(20, searchBox.Width - S(54)), S(24));
 
             add.SetBounds(pad, Math.Max(top + header, Height - pad - footer), Math.Max(10, Width - 2 * pad), footer);

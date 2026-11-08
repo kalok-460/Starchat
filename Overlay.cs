@@ -52,6 +52,8 @@ sealed class Overlay : Form {
     public List<ChatMessage> OcrMessages=new List<ChatMessage>();
     public List<ChatMessage> SpectrumMessages=new List<ChatMessage>();
     public int OcrWidth=1,OcrHeight=1;
+    readonly List<KeyValuePair<RectangleF,ChatMessage>> messageHits=new List<KeyValuePair<RectangleF,ChatMessage>>();
+    internal sealed class OcrRenderRow {public ChatMessage Message;public string Text;public PointF Origin;public bool Tilt;}
     public event Action ChangedBounds,ClosedInput;
     public event Action<Point> HandleRequested;
     public Overlay(Settings s) {
@@ -73,7 +75,7 @@ sealed class Overlay : Form {
         FormClosing+=(o,e)=>{if(e.CloseReason==CloseReason.UserClosing){e.Cancel=true;SetInteractive(false);}};
     }
     protected override bool ShowWithoutActivation {get{return !Interactive;}}
-    void RequestHandle(Point point){if(Interactive&&IsGame&&HandleRequested!=null)HandleRequested(point);}
+    void RequestHandle(Point point){if(Interactive&&HandleRequested!=null)HandleRequested(point);}
     void UpdateRoomLabel(){RoomLabel.Text=IsGame?"OCR":RoomName??"";RoomLabel.Width=Math.Max(64,Math.Min(160,ClientSize.Width/3));roomTip.SetToolTip(RoomLabel,RoomLabel.Text);}
     void SyncInputSurface(){
         if(InputSurface.IsDisposed)return;
@@ -104,7 +106,7 @@ sealed class Overlay : Form {
         base.OnPaint(e);var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
         g.TextRenderingHint=System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
         if(Interactive){using(var b=new SolidBrush(Color.FromArgb(24,36,51)))g.FillRectangle(b,0,0,Width,28);using(var p=new Pen(Color.FromArgb(90,207,184),2))g.DrawRectangle(p,1,1,Width-3,Height-3);using(var f=new Font("맑은 고딕",9))g.DrawString(RoomName+L.T("   · 드래그하여 이동 / 가장자리 크기 조절"),f,Brushes.White,8,6);}
-        if(IsGame)DrawOcr(g);else DrawSpectrum(g);
+        messageHits.Clear();if(IsGame)DrawOcr(g);else DrawSpectrum(g);
     }
     // The configured window bounds are the clipping boundary in both modes.
     Rectangle TextBounds(){
@@ -143,7 +145,7 @@ sealed class Overlay : Form {
         return lines;
     }
     void DrawOcr(Graphics g) {
-        if(!TranslationEnabled)return;
+        messageHits.Clear();if(!TranslationEnabled&&!OcrMessages.Any(m=>m.ManualTranslation))return;
         var area=TextBounds();float sy=area.Height/(float)Math.Max(1,OcrHeight);
         Color color;try{color=ColorTranslator.FromHtml(settings.TranslationColor);}catch{color=Color.Aquamarine;}
         var state=g.Save();g.SetClip(area,CombineMode.Intersect);
@@ -151,32 +153,44 @@ sealed class Overlay : Form {
         using(var brush=new SolidBrush(color))using(var format=(StringFormat)StringFormat.GenericTypographic.Clone()){
             format.FormatFlags|=StringFormatFlags.NoWrap;format.Trimming=StringTrimming.EllipsisCharacter;
             float height=(float)Math.Ceiling(font.GetHeight(g))+2;
+            var rows=new List<OcrRenderRow>();
             foreach(var msg in OcrMessages){
-                if(msg.Lines.Count==0||string.IsNullOrWhiteSpace(msg.Translation))continue;
+                if(msg.Lines.Count==0||string.IsNullOrWhiteSpace(msg.Translation)||!TranslationEnabled&&!msg.ManualTranslation)continue;
                 // Wrap against the fixed user-selected window width, never OCR box
-                // lengths. Apply one fixed rotation to each complete rendered row.
+                // lengths. Rank visible rendered rows by Y, not message order.
                 var pieces=CachedWrap(g,msg.Translation,font,area.Width-2);
                 for(int i=0;i<Math.Min(msg.Lines.Count,pieces.Count);i++){
                     var r=msg.Lines[i];float y=area.Top+(r.Top+r.Height)*sy+settings.TranslationYOffset;
                     if(y<area.Top||y+height>area.Bottom)continue;
                     string text=i==msg.Lines.Count-1&&pieces.Count>msg.Lines.Count?string.Join(" ",pieces.Skip(i)):pieces[i];
-                    var rowState=g.Save();
-                    try{
-                        using(var transform=OcrRowTransform(new PointF(area.Left,y)))g.MultiplyTransform(transform);
-                        var rect=new RectangleF(0,0,area.Width-2,height);
-                        g.DrawString(text,font,Brushes.Black,new RectangleF(1,1,rect.Width,rect.Height),format);
-                        g.DrawString(text,font,brush,rect,format);
-                    }finally{g.Restore(rowState);}
+                    rows.Add(new OcrRenderRow{Message=msg,Text=text,Origin=new PointF(area.Left,y)});
                 }
+            }
+            TiltBottomRows(rows);
+            foreach(var row in rows){
+                var rowState=g.Save();
+                try{
+                    using(var transform=OcrRowTransform(row.Origin,row.Tilt))g.MultiplyTransform(transform);
+                    var rect=new RectangleF(0,0,area.Width-2,height);
+                    g.DrawString(row.Text,font,Brushes.Black,new RectangleF(1,1,rect.Width,rect.Height),format);
+                    g.DrawString(row.Text,font,brush,rect,format);
+                    float rise=row.Tilt?(float)(area.Width*Math.Sin(.5*Math.PI/180)):0;
+                    messageHits.Add(new KeyValuePair<RectangleF,ChatMessage>(new RectangleF(row.Origin.X,row.Origin.Y-rise,area.Width,height+rise),row.Message));
+                }finally{g.Restore(rowState);}
             }
         }}finally{g.Restore(state);}
     }
+    internal static void TiltBottomRows(List<OcrRenderRow> rows){
+        foreach(var row in rows)row.Tilt=false;
+        foreach(var row in rows.OrderByDescending(r=>r.Origin.Y).Take(4))row.Tilt=true;
+    }
     // Screen Y grows downwards: -0.5 degrees makes the right end rise.
     // Pivot at the left of this row, so wrapping/other rows never move its origin.
-    internal static Matrix OcrRowTransform(PointF origin){
-        var transform=new Matrix();transform.Translate(origin.X,origin.Y);transform.Rotate(-0.5f);return transform;
+    internal static Matrix OcrRowTransform(PointF origin,bool tilt=true){
+        var transform=new Matrix();transform.Translate(origin.X,origin.Y);if(tilt)transform.Rotate(-0.5f);return transform;
     }
     void DrawSpectrum(Graphics g) {
+        messageHits.Clear();
         Color color;try{color=ColorTranslator.FromHtml(settings.SpectrumColor);}catch{color=Color.White;}
         var area=TextBounds();float y=area.Bottom;var state=g.Save();g.SetClip(area,CombineMode.Intersect);
         try{using(var font=new Font("맑은 고딕",settings.SpectrumFont,GraphicsUnit.Pixel))using(var brush=new SolidBrush(color))
@@ -191,18 +205,22 @@ sealed class Overlay : Form {
                 for(int j=lines.Count-1;j>=0&&y>area.Top;j--){
                     if(y-lineHeight<area.Top){y=area.Top;break;}
                     y-=lineHeight;g.DrawString(lines[j],font,Brushes.Black,new PointF(area.Left+1,y+1),format);g.DrawString(lines[j],font,brush,new PointF(area.Left,y),format);
+                    messageHits.Add(new KeyValuePair<RectangleF,ChatMessage>(new RectangleF(area.Left,y,area.Width,lineHeight),m));
                 }
                 y-=10;
             }
         }}finally{g.Restore(state);}
     }
-    public string HandleAt(Point point) {
+    public string HandleAt(Point point) {var message=MessageAt(point);return message==null?null:message.Handle;}
+    public ChatMessage MessageAt(Point point) {
         var area=OcrViewport;if(!area.Contains(point))return null;
+        foreach(var hit in messageHits.AsEnumerable().Reverse())if(hit.Key.Contains(point)&&(IsGame?OcrMessages:SpectrumMessages).Contains(hit.Value))return hit.Value;
+        if(!IsGame)return null;
         float sx=area.Width/(float)Math.Max(1,OcrWidth),sy=area.Height/(float)Math.Max(1,OcrHeight);
         foreach(var message in OcrMessages)for(int i=0;i<message.Lines.Count;i++){
             var r=message.Lines[i];double angle=(i<message.LineAngles.Count?message.LineAngles[i]:0)*Math.PI/180;
             double dx=(point.X-area.Left)/sx-r.X,dy=(point.Y-area.Top)/sy-r.Y,x=dx*Math.Cos(angle)+dy*Math.Sin(angle),y=-dx*Math.Sin(angle)+dy*Math.Cos(angle);
-            if(x>=-4&&x<=r.Width+4&&y>=-3&&y<=r.Height+Math.Max(8,settings.OcrFont+settings.TranslationYOffset))return message.Handle;
+            if(x>=-4&&x<=r.Width+4&&y>=-3&&y<=r.Height+Math.Max(8,settings.OcrFont+settings.TranslationYOffset))return message;
         }
         return null;
     }
