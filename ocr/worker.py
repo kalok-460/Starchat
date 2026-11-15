@@ -42,8 +42,22 @@ def emit(kind, **values):
 
 
 def preprocess(image):
-    """Lab 명도에만 CLAHE를 적용하고 색을 유지한 BGR 3채널을 반환한다."""
+    """채팅 색이 아닌 화소를 어둡게 한 뒤 Lab 명도에만 CLAHE를 적용하고 BGR 3채널을 반환한다.
+
+    게임 채팅 색은 네 가지다: 글로벌 #FFFFFF, 파티 #00FF4E, 귓속말 #7E3EFF, 채널 표시 #8DCCFF.
+    화소를 가장 큰 채널로 나눈 색이 이 중 가장 가까운 색과 얼마나 다른지(d)로
+    가중치 max(0.2, (1-d)^3)를 구해 곱한다. 뒤에서 조명을 받은 패널처럼 밝지만
+    채팅 색이 아닌 배경만 어두워진다. Rust 작업자(rust/ocr-worker/src/image.rs)와 같은 식이다.
+    """
     import cv2
+    import numpy as np
+    pixels = image[:, :, :3].astype(np.float32)
+    peak = pixels.max(axis=2, keepdims=True)
+    scaled = pixels / np.maximum(peak, 1)
+    palette = np.array([[255, 255, 255], [78, 255, 0], [255, 62, 126], [255, 204, 141]], np.float32) / 255  # BGR
+    distance = np.stack([np.abs(scaled - colour).max(axis=2) for colour in palette]).min(axis=0)
+    weight = np.where(peak[:, :, 0] > 0, np.maximum(.2, (1 - distance) ** 3), .2)
+    image = (pixels * weight[:, :, None] + .5).astype(np.uint8)
     lab = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2LAB)
     lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(lab[:, :, 0])
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)

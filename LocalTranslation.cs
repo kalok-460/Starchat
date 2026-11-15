@@ -31,8 +31,11 @@ static class LocalModel {
     }
     public static Process Start(string arguments) {
         string python=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ocr","runtime","python.exe");
-        if(!File.Exists(python))throw new TranslationException(L.T("로컬 번역 실행 파일이 없습니다. 전체 앱 폴더를 확인하세요."));
-        var start=new ProcessStartInfo(python,"-u \""+Path.Combine(DirectoryPath,"worker.py")+"\" "+arguments){WorkingDirectory=DirectoryPath,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
+        // Rust 작업자가 있으면 우선 사용한다. STARCHAT_TRANSLATE_WORKER=python이면 비교·진단용으로 기존 Python 작업자를 쓴다.
+        string native=Path.Combine(DirectoryPath,"starchat-translate.exe");
+        bool useNative=File.Exists(native)&&!string.Equals(Environment.GetEnvironmentVariable("STARCHAT_TRANSLATE_WORKER"),"python",StringComparison.OrdinalIgnoreCase);
+        if(!useNative&&!File.Exists(python))throw new TranslationException(L.T("로컬 번역 실행 파일이 없습니다. 전체 앱 폴더를 확인하세요."));
+        var start=new ProcessStartInfo(useNative?native:python,useNative?arguments:"-u \""+Path.Combine(DirectoryPath,"worker.py")+"\" "+arguments){WorkingDirectory=DirectoryPath,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
         start.EnvironmentVariables["PYTHONIOENCODING"]="utf-8";
         var process=new Process{StartInfo=start};process.ErrorDataReceived+=(s,e)=>{};
         try{process.Start();try{process.PriorityClass=ProcessPriorityClass.BelowNormal;}catch(System.ComponentModel.Win32Exception){}catch(InvalidOperationException){}process.BeginErrorReadLine();return process;}catch{process.Dispose();throw;}

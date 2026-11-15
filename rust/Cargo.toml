@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["ocr-worker", "translate-worker"]
+# translate-worker is experimental (slower than the Python CTranslate2 wheel, see AI_HANDOFF.md)
+# and compiles CTranslate2 + oneDNN from source; build it explicitly with `build.ps1 -Translator`.
+default-members = ["ocr-worker"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "unwind"
+strip = true

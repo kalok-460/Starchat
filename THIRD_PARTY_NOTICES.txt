@@ -1,4 +1,4 @@
-StarChat 0.3.17 - third-party components and assets
+StarChat 1.0.0 - third-party components and assets
 
 StarChat-authored code: Copyright (C) 2026 StarChat contributors.
 License: GNU General Public License version 3 only (GPL-3.0-only), see LICENSE.
@@ -68,3 +68,24 @@ StarChat's GPL license applies only to StarChat-authored code, not NLLB weights.
 SentencePiece 0.2.1 and py3langid 0.3.0 retain their original notices under
 ocr/runtime/Lib/site-packages. No ONNX model conversion dependency, PyTorch,
 Transformers, Paddle, CUDA or cuDNN runtime is needed for CPU translation.
+
+Rust workers (ocr/starchat-ocr.exe, translation/starchat-translate.exe):
+StarChat-authored Rust code under rust/ is GPL-3.0-only. The executables
+statically link the crates pinned in rust/Cargo.lock, each under its own terms:
+  ort / ort-sys (ONNX Runtime bindings): MIT OR Apache-2.0
+  windows-capture, windows (Microsoft windows-rs): MIT (windows-rs: MIT OR Apache-2.0)
+  ct2rs-sys with CTranslate2 (MIT) and its bundled ruy, cpu_features,
+    spdlog, cxxopts and thread_pool sources (Apache-2.0 / MIT / BSD)
+  sentencepiece / sentencepiece-sys with Google SentencePiece: Apache-2.0
+  whatlang (language detection): MIT
+  ureq, rustls, ring, webpki-roots (model download over HTTPS):
+    MIT OR Apache-2.0, ISC, MPL-2.0 (root certificate list)
+  serde_json, regex, sha2, yaml-rust2 and their dependencies: MIT OR Apache-2.0
+The detection/recognition processing in rust/ocr-worker/src/det.rs and rec.rs
+follows the same PaddleX processors as onnx_engine.py (Apache-2.0, see
+licenses/PaddleX-LICENSE.txt). ocr/onnxruntime.dll, onnxruntime_providers_shared.dll
+and DirectML.dll are unmodified copies of the files from the ONNX Runtime
+DirectML package listed above.
+https://github.com/pykeio/ort
+https://github.com/jkawamoto/ctranslate2-rs
+https://github.com/google/sentencepiece

@@ -160,13 +160,15 @@ static class UiTests {
             using(var menu=(ContextMenuStrip)Call(form,"CreateChatMenu",game,second,false))Check("message body menu offers retranslate",menu.Items.Count==1&&menu.Items[0].Text=="다시 번역");
             Call(form,"Shutdown");
         }
-        var rows=new[]{80f,20f,120f,40f,100f,60f}.Select(y=>new Overlay.OcrRenderRow{Origin=new PointF(12,y)}).ToList();Overlay.TiltBottomRows(rows);
-        Check("only four lowest rendered rows tilt regardless of list order",rows.Count(r=>r.Tilt)==4&&rows.All(r=>r.Tilt==(r.Origin.Y>=60)));
-        foreach(var row in rows)using(var matrix=Overlay.OcrRowTransform(row.Origin,row.Tilt)){
+        var rows=new[]{80f,20f,120f,40f,100f,60f}.Select(y=>new Overlay.OcrRenderRow{Origin=new PointF(12,y)}).ToList();Overlay.TiltRows(rows,20,100,0);
+        // Chat area 20..120: +0.5 degrees (right end lower) at the top, level in the middle, -0.5 at the bottom.
+        Check("row tilt follows vertical position regardless of list order",rows.All(r=>Math.Abs(r.Angle-.5f*(1-2*(r.Origin.Y-20)/100))<.0001f)&&Math.Abs(rows[1].Angle-.5f)<.0001f&&Math.Abs(rows[2].Angle+.5f)<.0001f);
+        foreach(var row in rows)using(var matrix=Overlay.OcrRowTransform(row.Origin,row.Angle)){
             var points=new[]{new PointF(0,0),new PointF(500,0)};matrix.TransformPoints(points);
-            Check("row angle matches lower-four rule at "+row.Origin.Y,Math.Abs(points[0].Y-row.Origin.Y)<.001&&Math.Abs(points[1].Y-(row.Origin.Y-(row.Tilt?500*Math.Sin(.5*Math.PI/180):0)))<.001);
+            Check("row angle matches position rule at "+row.Origin.Y,Math.Abs(points[0].Y-row.Origin.Y)<.001&&Math.Abs(points[1].Y-(row.Origin.Y+500*Math.Sin(row.Angle*Math.PI/180)))<.001);
         }
-        rows.RemoveRange(0,3);Overlay.TiltBottomRows(rows);Check("fewer than four visible rows all tilt",rows.All(r=>r.Tilt));
+        var edge=new List<Overlay.OcrRenderRow>{new Overlay.OcrRenderRow{Origin=new PointF(12,70)},new Overlay.OcrRenderRow{Origin=new PointF(12,500)},new Overlay.OcrRenderRow{Origin=new PointF(12,-40)}};Overlay.TiltRows(edge,20,100,0);
+        Check("centre row is level and rows outside the area clamp to half a degree",Math.Abs(edge[0].Angle)<.0001f&&Math.Abs(edge[1].Angle+.5f)<.0001f&&Math.Abs(edge[2].Angle-.5f)<.0001f);
         using(var overlay=new Overlay(new Settings{OcrFont=18,SpectrumFont=16})){
             overlay.Size=new Size(700,430);overlay.OcrWidth=overlay.OcrViewport.Width;overlay.OcrHeight=overlay.OcrViewport.Height;
             for(int i=0;i<6;i++){var message=new ChatMessage{Handle="Pilot"+i,Text="line "+i,Translation="번역문 "+(i+1)+" — 위 두 줄은 수평, 아래 네 줄만 기울입니다."};message.Lines.Add(new RectangleF(10,10+i*43,600,16));overlay.OcrMessages.Add(message);}

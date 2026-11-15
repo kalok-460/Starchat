@@ -1,0 +1,21 @@
+[package]
+name = "starchat-translate"
+version = "1.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "StarChat local translation worker: NLLB-200 on CTranslate2 (CPU INT8)"
+
+[[bin]]
+name = "starchat-translate"
+path = "src/main.rs"
+
+[dependencies]
+# oneDNN supplies the INT8/float GEMM kernels (Apache-2.0, GPL compatible) and MSVC OpenMP the
+# threading. The default "ruy" backend measured ~10x slower than the Python wheel on x86-64.
+ct2rs-sys = { version = "0.11.1", default-features = false, features = ["dnnl", "openmp-runtime-comp"] }
+sentencepiece = "0.14"
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+whatlang = "0.16"
+ureq = "2"
+sha2 = "0.10"

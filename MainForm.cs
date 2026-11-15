@@ -50,12 +50,13 @@ sealed class MainForm : Form {
     readonly Room homeRoom=new Room{Id="home",Name=L.T("홈"),Type="home"},gameRoom=new Room{Id="game",Name=L.T("인게임 채팅"),Type="game"};
     readonly List<Room> rooms=new List<Room>();readonly Dictionary<string,string> drafts=new Dictionary<string,string>();
     Room current;IntPtr gameWindow;string gameTitle="";bool connectedGame,pollBusy,ocrStarted,settingBounds;volatile bool sendBusy,closing;int accountEpoch;DateTime nextFriends=DateTime.MinValue;
-    readonly object ocrGate=new object();object latestOcr;readonly Queue<TranslationJob> translations=new Queue<TranslationJob>();int workEpoch,translationActive;bool transcriptDirty;readonly Timer renderTimer=new Timer{Interval=100};readonly HashSet<string> changedRooms=new HashSet<string>();
+    readonly object ocrGate=new object();object latestOcr,latestMotion;readonly Queue<object> ocrEvents=new Queue<object>();int ocrPosted;long ocrSequence=-1;bool ocrReread;RereadRequest pendingReread;
+    sealed class RereadRequest{public ChatMessage Message;public HashSet<string> Keys;public TaskCompletionSource<bool> Done=new TaskCompletionSource<bool>();}readonly Queue<TranslationJob> translations=new Queue<TranslationJob>();int workEpoch,translationActive;bool transcriptDirty;readonly Timer renderTimer=new Timer{Interval=100};readonly HashSet<string> changedRooms=new HashSet<string>();
     string selfNickname="";readonly HashSet<string> noticedInvites=new HashSet<string>();
     readonly HttpClient avatarHttp=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(10)};
     public MainForm(SettingsStore storage,Settings configuration,bool testing) {
         store=storage;settings=configuration;smoke=testing;spectrumEnabledApplied=settings.SpectrumEnabled;log=new OcrLog(settings);spectrum=new Spectrum(store.Root);overlay=new Overlay(settings);spectrumOverlay=new Overlay(settings){IsGame=false,RoomName="Spectrum"};
-        Text=L.T("StarChat 0.3.17 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
+        Text=L.T("StarChat 1.0.0 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
         Icon=AppIcon.Load();
         Size=new Size(1100,760);MinimumSize=new Size(800,580);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;
         var left=new Panel{Dock=DockStyle.Left,Width=340,BackColor=Theme.Side,Padding=new Padding(16)};
@@ -97,7 +98,10 @@ sealed class MainForm : Form {
         spectrum.EventReceived+=OnSpectrumEvent;
         spectrum.Status+=SetStatus;spectrum.Connected+=()=>{accountEpoch++;loginButton.Text=L.T("로그아웃");Fire(LoadAccount);};
         spectrum.Disconnected+=()=>{accountEpoch++;ClearAccount();};
-        ocr.Message+=data=>{lock(ocrGate){latestOcr=data;}};ocr.Error+=message=>Ui(()=>SetStatus(message));
+        // 위치(lines)·흔들림(motion)은 최신 값 하나만, 상태 메시지는 순서대로 보관하고 타이머를 기다리지 않고 바로 UI에 전달한다.
+        ocr.Message+=data=>{string kind=Json.Str(data,"type");lock(ocrGate){if(kind=="lines")latestOcr=data;else if(kind=="motion")latestMotion=data;else{ocrEvents.Enqueue(data);if(ocrEvents.Count>32)ocrEvents.Dequeue();}}
+            if(System.Threading.Interlocked.Exchange(ref ocrPosted,1)==0){if(closing||IsDisposed||!IsHandleCreated)System.Threading.Interlocked.Exchange(ref ocrPosted,0);else try{BeginInvoke((Action)DrainOcr);}catch(InvalidOperationException){System.Threading.Interlocked.Exchange(ref ocrPosted,0);}}};
+        ocr.Error+=message=>Ui(()=>SetStatus(message));
         renderTimer.Tick+=(s,e)=>DrainUi();renderTimer.Start();
         searchTimer.Tick+=(s,e)=>{searchTimer.Stop();Fire(SearchOcrLogs);};
         gameTimer.Tick+=(s,e)=>TickGame();pollTimer.Tick+=async(s,e)=>await Poll();maintenance.Tick+=(s,e)=>{try{log.Prune();}catch(Exception ex){SetStatus(L.T("기록 정리 실패: ")+ex.Message);}};
@@ -349,20 +353,53 @@ sealed class MainForm : Form {
     // 채널/핸들을 분리한 본문만 번역한다. Spectrum 메시지는 이 로그 경로에 들어오지 않는다.
     void OnOcr(object data){
         if(closing||!settings.OcrEnabled||gameWindow==IntPtr.Zero||!Native.IsWindow(gameWindow)||Json.Num(data,"_ocrSession")!=ocr.SessionId)return;
-        string type=Json.Str(data,"type");if(type=="ready"){ConfigureOcr();SetStatus(L.T("PP-OCRv6 small 영어 인식 준비 완료 · ")+Json.Str(data,"device")+"");return;}
+        string type=Json.Str(data,"type");if(type=="ready"){ocrReread=Convert.ToBoolean(Json.Get(data,"reread")??false);ConfigureOcr();SetStatus(L.T("PP-OCRv6 small 영어 인식 준비 완료 · ")+Json.Str(data,"device")+"");return;}
         if((type=="status"||type=="error")&&Convert.ToBoolean(Json.Get(data,"fatal")??false)&&ocr.DeviceMode!="cpu"){ocr.DeviceMode="cpu";ocr.CancelSession();ocrStarted=false;StartOcr();SetStatus(L.T("DirectML GPU를 사용할 수 없어 CPU OCR로 전환했습니다."));return;}
         if(type=="status"||type=="error"){SetStatus(L.WorkerStatus(Json.Str(data,"message")));return;}if(type!="lines"||!Convert.ToBoolean(Json.Get(data,"full")??false))return;
         var lines=Json.Rows(data,"lines").Select(v=>new OcrLine{TrackKey=Json.Str(v,"trackKey"),Text=Json.Str(v,"text"),Confidence=(float)Json.Num(v,"confidence"),Angle=(float)Json.Num(v,"angle"),LayoutBounds=Json.Get(v,"layoutX")==null?RectangleF.Empty:new RectangleF((float)Json.Num(v,"layoutX"),(float)Json.Num(v,"layoutY"),(float)Json.Num(v,"w"),(float)Json.Num(v,"h")),Bounds=new RectangleF((float)Json.Num(v,"x"),(float)Json.Num(v,"y"),(float)Json.Num(v,"w"),(float)Json.Num(v,"h"))}).ToList();
-        var fresh=tracker.Update(ChatParser.Parse(lines));overlay.OcrMessages=tracker.Visible;overlay.OcrWidth=(int)Json.Num(data,"width");overlay.OcrHeight=(int)Json.Num(data,"height");ocrRevision++;overlay.Invalidate();
+        // 이 좌표는 검출에 쓴 프레임 기준이다. 그 뒤의 HUD 흔들림은 작업자가 함께 보낸 dy와 이후 motion 메시지로 따라간다.
+        ocrSequence=Json.Get(data,"sequence")==null?-1:(long)Json.Num(data,"sequence");overlay.MotionY=Json.Get(data,"dy")==null?0:(float)Json.Num(data,"dy");
+        var parsed=ChatParser.Parse(lines);var fresh=tracker.Update(parsed);CompleteReread(data,parsed);overlay.OcrMessages=tracker.Visible;overlay.OcrWidth=(int)Json.Num(data,"width");overlay.OcrHeight=(int)Json.Num(data,"height");ocrRevision++;overlay.Invalidate();
         foreach(var m in fresh){gameRoom.Messages.Add(m);if(gameRoom.Messages.Count>500)gameRoom.Messages.RemoveAt(0);try{log.Append(m);}catch(Exception ex){SetStatus(L.T("OCR 기록 저장 실패: ")+ex.Message);}if(RoomTranslation(gameRoom))QueueTranslation(m,gameRoom);}
+        if(fresh.Count>0)StartTranslations(); // 새 문장은 다음 100ms 타이머를 기다리지 않고 바로 번역을 시작한다.
         if(current==gameRoom&&fresh.Count>0)transcriptDirty=true;
         if(fresh.Count>0&&searchQuery.Length>0)RefreshSidebar();
     }
     void CancelTranslations(bool game){var keep=translations.Where(job=>(job.Room==gameRoom)!=game).ToArray();foreach(var job in translations)if((job.Room==gameRoom)==game)job.Message.Translating=false;translations.Clear();foreach(var job in keep)translations.Enqueue(job);}
-    void StopOcrWork(){workEpoch++;lock(ocrGate){latestOcr=null;}CancelTranslations(true);ocr.CancelSession();ocrStarted=false;tracker.Clear();overlay.OcrMessages=new List<ChatMessage>();overlay.Invalidate();}
+    // 검출 사이의 프레임마다 오는 공통 이동량. 기준이 된 lines 패킷이 현재 표시 중인 것일 때만 적용한다.
+    void OnOcrMotion(object data){
+        if(closing||!settings.OcrEnabled||gameWindow==IntPtr.Zero||Json.Num(data,"_ocrSession")!=ocr.SessionId||(long)Json.Num(data,"base")!=ocrSequence)return;
+        float dy=(float)Json.Num(data,"dy");if(Math.Abs(dy-overlay.MotionY)<0.05f)return;overlay.MotionY=dy;if(overlay.Visible)overlay.Invalidate();
+    }
+    void DrainOcr(){
+        System.Threading.Interlocked.Exchange(ref ocrPosted,0);if(closing)return;
+        object lines,motion;object[] events;lock(ocrGate){lines=latestOcr;latestOcr=null;motion=latestMotion;latestMotion=null;events=ocrEvents.ToArray();ocrEvents.Clear();}
+        try{foreach(var item in events)OnOcr(item);if(lines!=null)OnOcr(lines);if(motion!=null)OnOcrMotion(motion);}catch(Exception ex){SetStatus(L.T("채팅 결과 처리: ")+ex.Message);}
+    }
+    // "다시 번역"은 먼저 그 채팅의 행을 다시 인식시킨다. 작업자가 응답하지 않거나(구형 작업자, OCR 꺼짐, 행이 사라짐) 2초가 지나면 기존 본문으로 진행한다.
+    Task<bool> RereadMessage(ChatMessage message){
+        if(!ocrReread||!ocrStarted||!settings.OcrEnabled||gameWindow==IntPtr.Zero||string.IsNullOrEmpty(message.TrackKey)||!tracker.Visible.Contains(message))return Task.FromResult(false);
+        if(pendingReread!=null)pendingReread.Done.TrySetResult(false);
+        var request=new RereadRequest{Message=message,Keys=new HashSet<string>(message.TrackKey.Split(new[]{'|'},StringSplitOptions.RemoveEmptyEntries))};pendingReread=request;
+        ocr.Reread(request.Keys);
+        Task.Delay(2000).ContinueWith(_=>Ui(()=>{if(pendingReread==request){pendingReread=null;request.Done.TrySetResult(false);}}));
+        return request.Done.Task;
+    }
+    void CompleteReread(object data,List<ChatMessage> parsed){
+        var request=pendingReread;if(request==null)return;
+        foreach(var key in Json.Rows(data,"reread"))request.Keys.Remove(Convert.ToString(key));
+        if(request.Keys.Count>0)return;
+        pendingReread=null;var message=request.Message;string first=message.TrackKey.Split('|')[0];
+        // 추적 키는 그대로이므로 같은 메시지 객체가 유지된다. 새로 읽은 본문만 옮겨 온다.
+        var read=parsed.FirstOrDefault(p=>p.TrackKey==message.TrackKey)??parsed.FirstOrDefault(p=>p.TrackKey.Split('|')[0]==first);
+        bool changed=read!=null&&(read.Text!=message.Text||read.Handle!=message.Handle||read.Channel!=message.Channel);
+        if(changed){message.Text=read.Text;message.Handle=read.Handle;message.Channel=read.Channel;tracker.Resnapshot(message);if(current==gameRoom)transcriptDirty=true;}
+        request.Done.TrySetResult(changed);
+    }
+    void StopOcrWork(){workEpoch++;ocrSequence=-1;ocrReread=false;if(pendingReread!=null){pendingReread.Done.TrySetResult(false);pendingReread=null;}overlay.MotionY=0;lock(ocrGate){latestOcr=null;latestMotion=null;ocrEvents.Clear();}CancelTranslations(true);ocr.CancelSession();ocrStarted=false;tracker.Clear();overlay.OcrMessages=new List<ChatMessage>();overlay.Invalidate();}
     void DrainUi(){
         if(closing)return;
-        try{object data;lock(ocrGate){data=latestOcr;latestOcr=null;}if(data!=null)OnOcr(data);
+        try{DrainOcr();
             if(current!=null&&current!=homeRoom&&current!=gameRoom&&spectrum.LoggedIn&&RoomVisible(current))Fire(()=>MarkRoomRead(current));
             if(lastSpectrumRoom!=null&&lastSpectrumRoom!=current&&spectrum.LoggedIn&&RoomVisible(lastSpectrumRoom))Fire(()=>MarkRoomRead(lastSpectrumRoom));
             if(transcriptDirty){transcriptDirty=false;RenderTranscript();}
@@ -371,14 +408,15 @@ sealed class MainForm : Form {
                 if(!RoomTranslation(room)||(room==gameRoom?!settings.OcrEnabled||gameWindow==IntPtr.Zero:!settings.SpectrumEnabled||!spectrum.LoggedIn))continue;
                 foreach(var message in room.Messages){QueueTranslation(message,room);if(translations.Count>=64)break;}if(translations.Count>=64)break;
             }}
-            for(int started=0;started<2&&translationActive<2&&translations.Count>0;started++){var job=translations.Dequeue();Fire(()=>TranslateQueued(job));}
+            StartTranslations();
         }catch(Exception ex){SetStatus(L.T("채팅 결과 처리: ")+ex.Message);}
     }
+    void StartTranslations(){for(int started=0;started<2&&translationActive<2&&translations.Count>0;started++){var job=translations.Dequeue();Fire(()=>TranslateQueued(job));}}
     void QueueTranslation(ChatMessage message,Room room=null){if(room==null)room=gameRoom;if(room==gameRoom?!settings.OcrEnabled:!settings.SpectrumEnabled)return;if(message.Translating||message.TranslationAttempted||!string.IsNullOrEmpty(message.Translation)||translations.Count>=64)return;message.Translating=true;translations.Enqueue(new TranslationJob{Message=message,Room=room,Epoch=workEpoch,Account=accountEpoch,Reception=receptionEpoch});}
     bool ValidTranslation(TranslationJob job){return !closing&&RoomTranslation(job.Room)&&(job.Room==gameRoom?settings.OcrEnabled&&job.Epoch==workEpoch&&gameWindow!=IntPtr.Zero:ReceptionCurrent(job.Reception)&&job.Account==accountEpoch&&rooms.Contains(job.Room));}
     async Task TranslateQueued(TranslationJob job){var message=job.Message;if(!ValidTranslation(job)){message.Translating=false;return;}translationActive++;message.TranslationAttempted=true;
         try{string translated=await translator.Translate(message.Text,job.Room==gameRoom?"en":"auto",settings.Language,settings.Translation());if(!ValidTranslation(job))return;message.Translation=translated;transcriptDirty=true;overlay.Invalidate();spectrumOverlay.Invalidate();if(searchQuery.Length>0)RefreshSidebar();}
-        finally{translationActive--;message.Translating=false;}
+        finally{translationActive--;message.Translating=false;if(!closing)StartTranslations();}
     }
     void Restore(){Show();WindowState=FormWindowState.Normal;Activate();}
     void LaunchCompanion(){settings.NormalizeLaunchSettings();foreach(string path in settings.Companions){try{if(!File.Exists(path)||!string.Equals(Path.GetExtension(path),".exe",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException(L.T("함께 실행할 프로그램 경로가 올바르지 않습니다."));Process.Start(new ProcessStartInfo(path){UseShellExecute=true,WorkingDirectory=Path.GetDirectoryName(path)});}catch(Exception ex){SetStatus(ex.Message);}}}
@@ -503,10 +541,13 @@ sealed class MainForm : Form {
     async Task RetranslateMessage(Room room,ChatMessage message){
         if(closing||message==null||message.Translating||room==null||room==homeRoom)return;
         if(room!=gameRoom&&(!settings.SpectrumEnabled||!rooms.Contains(room)))return;
-        int account=accountEpoch,receive=receptionEpoch;string original=message.Text;
+        int account=accountEpoch,receive=receptionEpoch;string original;
         message.Translating=true;message.TranslationAttempted=true;
         try{
             SetStatus(L.T("선택한 채팅을 다시 번역하고 있습니다."));
+            // 인게임 채팅은 원문부터 다시 읽는다. 잘못 인식된 글자를 고친 뒤 번역한다.
+            if(room==gameRoom)await RereadMessage(message);
+            if(closing)return;original=message.Text;
             string translated=await translator.Translate(original,room==gameRoom?"en":"auto",settings.Language,settings.Translation(),false,true);
             if(closing||message.Text!=original||room!=gameRoom&&(account!=accountEpoch||!ReceptionCurrent(receive)||!rooms.Contains(room)))return;
             message.Translation=translated;message.ManualTranslation=true;

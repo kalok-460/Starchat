@@ -298,7 +298,7 @@
   "StarChat은 GNU GPL v3.0으로 제공되며 어떠한 보증도 없습니다. 소스코드와 라이선스 조건은 배포 폴더에서 확인하세요.": "StarChat is free software under GNU GPL v3.0, without any warranty. See the distribution folder for source code and license terms.",
   "GPU 구동에 필요한 파일입니다. 설치하지 않아도 CPU로 사용할 수 있습니다.": "These files enable GPU OCR. You can use CPU OCR without installing them.",
   "설치": "Install",
-  "StarChat 0.3.17 · 스타 시티즌 채팅 도우미": "StarChat 0.3.17 · Star Citizen chat companion",
+  "StarChat 1.0.0 · 스타 시티즌 채팅 도우미": "StarChat 1.0.0 · Star Citizen chat companion",
   "GPU 구동에 필요한 파일입니다.\n설치하지 않아도 CPU로 사용할 수 있습니다.": "These files enable GPU OCR.\nCPU OCR works without installing them.",
   "PP-OCRv6 small ONNX · DirectML GPU 자동 선택. GPU를 사용할 수 없으면 CPU로 전환합니다. 추가 설치는 필요하지 않습니다.": "PP-OCRv6 small ONNX · DirectML GPU selected automatically, with CPU fallback. No additional installation required.",
   "DirectML GPU를 사용할 수 없어 CPU OCR로 전환했습니다.": "DirectML GPU is unavailable. Switched to CPU OCR.",

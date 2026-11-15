@@ -11,8 +11,15 @@ COMMON=['translation-glossary.ko-en.json','TranslationGlossary.md','licenses/NLL
 SOURCE=['AssemblyInfo.cs','Program.cs','I18n.cs','Core.cs','Native.cs','OcrClient.cs','Spectrum.cs','Translation.cs','LocalTranslation.cs','LocalModelDialog.cs','Overlay.cs','Visuals.cs','SettingsForm.cs','MainForm.cs',
  'CoreTests.cs','UiTests.cs','TranslationTests.cs','OcrRegressionTests.cs','run-core-tests.ps1','run-ui-tests.ps1','run-translation-tests.ps1','run-ocr-regressions.ps1','test-bridge.cjs',
  'build.ps1','package.ps1','package_release.py','.gitignore',
- 'translation/test_local.py','ocr/test_geometry.py','ocr/test_recognition.py','ocr/test_onnx.py','ocr/check_layout.py','ocr/check_ticks.py','ocr/integration_check.ps1','ocr/scroll_check.ps1','ocr/protocol_check.py']
+ 'translation/test_local.py','ocr/test_geometry.py','ocr/test_recognition.py','ocr/test_onnx.py','ocr/check_layout.py','ocr/check_ticks.py','ocr/integration_check.ps1','ocr/scroll_check.ps1','ocr/protocol_check.py',
+ # Rust workers (OCR + local translation). Cargo.lock pins every crate version.
+ 'rust/Cargo.toml','rust/Cargo.lock','rust/.cargo/config.toml','rust/build.ps1','rust/live_check.ps1','rust/reread_check.ps1',
+ 'rust/ocr-worker/Cargo.toml','rust/ocr-worker/src/main.rs','rust/ocr-worker/src/image.rs','rust/ocr-worker/src/det.rs','rust/ocr-worker/src/rec.rs','rust/ocr-worker/src/engine.rs','rust/ocr-worker/src/geometry.rs','rust/ocr-worker/src/text.rs','rust/ocr-worker/src/ticks.rs','rust/ocr-worker/src/motion.rs',
+ 'rust/translate-worker/Cargo.toml','rust/translate-worker/src/main.rs','rust/translate-worker/src/engine.rs','rust/translate-worker/src/runtime.rs']
 DLLS=['Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll']
+# Built by rust/build.ps1; StarChat.exe prefers the Rust OCR worker over ocr/worker.py.
+# The experimental Rust translation worker is source-only and is not shipped.
+NATIVE=['ocr/starchat-ocr.exe','ocr/onnxruntime.dll','ocr/onnxruntime_providers_shared.dll','ocr/DirectML.dll']
 MODELS=['det','rec']
 MODEL_FILES=['inference.onnx','inference.yml','README.md','LICENSE']
 SKIP_DIRS={'__pycache__','.cache','.git','Scripts'}
@@ -61,7 +68,7 @@ def main():
  if not Path(args.destination).is_absolute() or dest==ROOT or ROOT in dest.parents:raise ValueError('Use an absolute release folder outside this project')
  if dest.exists():raise FileExistsError('Choose a new release folder; existing content is never replaced')
  # Check required inputs before creating output.
- for name in COMMON+SOURCE+DLLS+['StarChat.exe','ocr/runtime/python.exe']:
+ for name in COMMON+SOURCE+DLLS+NATIVE+['StarChat.exe','ocr/runtime/python.exe']:
   if not (ROOT/name).is_file():raise FileNotFoundError(name)
  dest.mkdir(parents=True);source=dest/'source';app=dest/'StarChat'
  for target in [source,app]:
@@ -70,7 +77,7 @@ def main():
   copy(ROOT/('ocr/OCR.release.md' if (ROOT/'ocr/OCR.release.md').exists() else 'ocr/OCR.md'),target/'ocr/OCR.md')
  copy_paths(SOURCE,source)
  for name in DLLS:copy(ROOT/'deps'/name,source/'deps'/name)
- copy_paths(['StarChat.exe']+DLLS,app)
+ copy_paths(['StarChat.exe']+DLLS+NATIVE,app)
  runtime=ROOT/'ocr/runtime'
  for p in sorted(runtime.rglob('*')):
   rel=p.relative_to(runtime)

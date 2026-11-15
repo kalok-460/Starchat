@@ -147,6 +147,8 @@ class ChatTracker {
     static string Normalize(string s) { return new string((s??"").Normalize(NormalizationForm.FormKC).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray()); }
     static Observation Snapshot(ChatMessage m) { return new Observation { Message=m,Channel=Normalize(m.Channel),Handle=Normalize(m.Handle),Body=Normalize(m.Text),Bounds=m.Lines.Count==0?RectangleF.Empty:m.Lines[0] }; }
     public void Clear(){Visible=new List<ChatMessage>();previous.Clear();recent.Clear();nextOrder=0;}
+    // 수동 재인식으로 본문이 바뀐 메시지의 비교용 문자열을 새로 만든다. 순서와 위치 기록은 유지한다.
+    public void Resnapshot(ChatMessage m){foreach(var o in previous.Concat(recent))if(ReferenceEquals(o.Message,m)){o.Channel=Normalize(m.Channel);o.Handle=Normalize(m.Handle);o.Body=Normalize(m.Text);}}
     static bool Near(string a,string b,int limit) {
         if(a==b)return true;if(limit==0||Math.Abs(a.Length-b.Length)>limit)return false;
         var row=new int[b.Length+1];for(int j=0;j<row.Length;j++)row[j]=j;

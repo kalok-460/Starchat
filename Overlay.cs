@@ -52,8 +52,10 @@ sealed class Overlay : Form {
     public List<ChatMessage> OcrMessages=new List<ChatMessage>();
     public List<ChatMessage> SpectrumMessages=new List<ChatMessage>();
     public int OcrWidth=1,OcrHeight=1;
+    // OCR 좌표계(캡처 픽셀)에서 마지막 검출 이후 채팅 전체가 세로로 움직인 양. 검출 사이의 HUD 흔들림을 따라간다.
+    public float MotionY;
     readonly List<KeyValuePair<RectangleF,ChatMessage>> messageHits=new List<KeyValuePair<RectangleF,ChatMessage>>();
-    internal sealed class OcrRenderRow {public ChatMessage Message;public string Text;public PointF Origin;public bool Tilt;}
+    internal sealed class OcrRenderRow {public ChatMessage Message;public string Text;public PointF Origin;public float Angle;}
     public event Action ChangedBounds,ClosedInput;
     public event Action<Point> HandleRequested;
     public Overlay(Settings s) {
@@ -160,34 +162,41 @@ sealed class Overlay : Form {
                 // lengths. Rank visible rendered rows by Y, not message order.
                 var pieces=CachedWrap(g,msg.Translation,font,area.Width-2);
                 for(int i=0;i<Math.Min(msg.Lines.Count,pieces.Count);i++){
-                    var r=msg.Lines[i];float y=area.Top+(r.Top+r.Height)*sy+settings.TranslationYOffset;
+                    var r=msg.Lines[i];float y=area.Top+(r.Top+r.Height+MotionY)*sy+settings.TranslationYOffset;
                     if(y<area.Top||y+height>area.Bottom)continue;
                     string text=i==msg.Lines.Count-1&&pieces.Count>msg.Lines.Count?string.Join(" ",pieces.Skip(i)):pieces[i];
                     rows.Add(new OcrRenderRow{Message=msg,Text=text,Origin=new PointF(area.Left,y)});
                 }
             }
-            TiltBottomRows(rows);
+            TiltRows(rows,area.Top,area.Height,height);
             foreach(var row in rows){
                 var rowState=g.Save();
                 try{
-                    using(var transform=OcrRowTransform(row.Origin,row.Tilt))g.MultiplyTransform(transform);
+                    using(var transform=OcrRowTransform(row.Origin,row.Angle))g.MultiplyTransform(transform);
                     var rect=new RectangleF(0,0,area.Width-2,height);
                     g.DrawString(row.Text,font,Brushes.Black,new RectangleF(1,1,rect.Width,rect.Height),format);
                     g.DrawString(row.Text,font,brush,rect,format);
-                    float rise=row.Tilt?(float)(area.Width*Math.Sin(.5*Math.PI/180)):0;
-                    messageHits.Add(new KeyValuePair<RectangleF,ChatMessage>(new RectangleF(row.Origin.X,row.Origin.Y-rise,area.Width,height+rise),row.Message));
+                    // The right end rises (negative angle) or drops (positive); cover it for clicks.
+                    float rise=(float)(area.Width*Math.Sin(Math.Abs(row.Angle)*Math.PI/180));
+                    messageHits.Add(new KeyValuePair<RectangleF,ChatMessage>(new RectangleF(row.Origin.X,row.Origin.Y-(row.Angle<0?rise:0),area.Width,height+rise),row.Message));
                 }finally{g.Restore(rowState);}
             }
         }}finally{g.Restore(state);}
     }
-    internal static void TiltBottomRows(List<OcrRenderRow> rows){
-        foreach(var row in rows)row.Tilt=false;
-        foreach(var row in rows.OrderByDescending(r=>r.Origin.Y).Take(4))row.Tilt=true;
+    internal const float MaxTilt=0.5f;
+    // The in-game chat panel is slightly fanned: its top line drops to the right, the
+    // middle is level and the bottom line rises to the right. The angle follows the
+    // row's vertical position in the chat area, so blank handle rows cannot shift it.
+    internal static void TiltRows(List<OcrRenderRow> rows,float areaTop,float areaHeight,float rowHeight){
+        foreach(var row in rows){
+            float t=areaHeight<=0?.5f:Math.Max(0,Math.Min(1,(row.Origin.Y+rowHeight/2-areaTop)/areaHeight));
+            row.Angle=MaxTilt*(1-2*t);
+        }
     }
-    // Screen Y grows downwards: -0.5 degrees makes the right end rise.
+    // Screen Y grows downwards: a negative angle makes the right end rise.
     // Pivot at the left of this row, so wrapping/other rows never move its origin.
-    internal static Matrix OcrRowTransform(PointF origin,bool tilt=true){
-        var transform=new Matrix();transform.Translate(origin.X,origin.Y);if(tilt)transform.Rotate(-0.5f);return transform;
+    internal static Matrix OcrRowTransform(PointF origin,float angle=-MaxTilt){
+        var transform=new Matrix();transform.Translate(origin.X,origin.Y);if(angle!=0)transform.Rotate(angle);return transform;
     }
     void DrawSpectrum(Graphics g) {
         messageHits.Clear();
@@ -219,7 +228,7 @@ sealed class Overlay : Form {
         float sx=area.Width/(float)Math.Max(1,OcrWidth),sy=area.Height/(float)Math.Max(1,OcrHeight);
         foreach(var message in OcrMessages)for(int i=0;i<message.Lines.Count;i++){
             var r=message.Lines[i];double angle=(i<message.LineAngles.Count?message.LineAngles[i]:0)*Math.PI/180;
-            double dx=(point.X-area.Left)/sx-r.X,dy=(point.Y-area.Top)/sy-r.Y,x=dx*Math.Cos(angle)+dy*Math.Sin(angle),y=-dx*Math.Sin(angle)+dy*Math.Cos(angle);
+            double dx=(point.X-area.Left)/sx-r.X,dy=(point.Y-area.Top)/sy-r.Y-MotionY,x=dx*Math.Cos(angle)+dy*Math.Sin(angle),y=-dx*Math.Sin(angle)+dy*Math.Cos(angle);
             if(x>=-4&&x<=r.Width+4&&y>=-3&&y<=r.Height+Math.Max(8,settings.OcrFont+settings.TranslationYOffset))return message;
         }
         return null;

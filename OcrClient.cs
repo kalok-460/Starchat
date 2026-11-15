@@ -10,7 +10,7 @@ using System.Threading;
 namespace StarChat {
 sealed class OcrClient : IDisposable {
     readonly object gate=new object(); Process process; int session;
-    string lastConfig="", pendingConfig; bool pendingRefresh, writerQueued;
+    string lastConfig="", pendingConfig; bool pendingRefresh, writerQueued; readonly List<string> pendingReread=new List<string>();
     public string DeviceMode="auto";
     public event Action<object> Message;
     public event Action<string> Error;
@@ -20,8 +20,11 @@ sealed class OcrClient : IDisposable {
     public void Start() {
         if(Running)return;CancelSession();
         string dir=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"ocr"),python=Path.Combine(dir,"runtime","python.exe");
-        if(!File.Exists(python))throw new InvalidOperationException(L.T("OCR 구성 요소가 없습니다. ocr\\setup.ps1을 실행해 설치하세요."));
-        var start=new ProcessStartInfo(python,"-u \""+Path.Combine(dir,"worker.py")+"\"") {WorkingDirectory=dir,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
+        // Rust 작업자가 있으면 우선 사용한다. STARCHAT_OCR_WORKER=python이면 비교·진단용으로 기존 Python 작업자를 쓴다.
+        string native=Path.Combine(dir,"starchat-ocr.exe");
+        bool useNative=File.Exists(native)&&!string.Equals(Environment.GetEnvironmentVariable("STARCHAT_OCR_WORKER"),"python",StringComparison.OrdinalIgnoreCase);
+        if(!useNative&&!File.Exists(python))throw new InvalidOperationException(L.T("OCR 구성 요소가 없습니다. ocr\\setup.ps1을 실행해 설치하세요."));
+        var start=new ProcessStartInfo(useNative?native:python,useNative?"":"-u \""+Path.Combine(dir,"worker.py")+"\"") {WorkingDirectory=dir,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
         start.EnvironmentVariables["PYTHONIOENCODING"]="utf-8";
         start.EnvironmentVariables["STARCHAT_OCR_DEVICE"]=DeviceMode;
         var p=new Process {StartInfo=start,EnableRaisingEvents=true};int generation;
@@ -43,6 +46,7 @@ sealed class OcrClient : IDisposable {
             try{while(true){string line;
                 lock(gate){if(!ReferenceEquals(process,p)||session!=generation)return;
                     if(pendingConfig!=null){line=pendingConfig;pendingConfig=null;}else if(pendingRefresh){line="{\"type\":\"refresh\"}";pendingRefresh=false;}
+                    else if(pendingReread.Count>0){line=Json.New().Serialize(new{type="reread",keys=pendingReread.ToArray()});pendingReread.Clear();}
                     else {writerQueued=false;return;}}
                 p.StandardInput.WriteLine(line);p.StandardInput.Flush();
             }}catch(Exception){lock(gate){if(ReferenceEquals(process,p)&&session==generation)writerQueued=false;}if(Current(p,generation)){var error=Error;if(error!=null)error(L.T("OCR 연결이 끊겼습니다."));}}
@@ -53,8 +57,10 @@ sealed class OcrClient : IDisposable {
         lock(gate){if(value==lastConfig)return;lastConfig=value;pendingConfig=value;QueueWrite();}
     }
     public void Refresh(){lock(gate){pendingRefresh=true;QueueWrite();}}
+    // 사용자가 고른 채팅의 행만 다시 읽게 한다(Rust 작업자 전용). 결과는 lines 메시지의 reread 목록으로 돌아온다.
+    public void Reread(IEnumerable<string> keys){lock(gate){foreach(string key in keys)if(!string.IsNullOrEmpty(key)&&pendingReread.Count<64)pendingReread.Add(key);QueueWrite();}}
     // UI 스레드에서는 세션 무효화만 한다. WaitForExit/파이프 종료/자식 종료는 별도 스레드에서 실행한다.
-    public void CancelSession(){Process p;lock(gate){Interlocked.Increment(ref session);p=process;process=null;lastConfig="";pendingConfig=null;pendingRefresh=false;writerQueued=false;}
+    public void CancelSession(){Process p;lock(gate){Interlocked.Increment(ref session);p=process;process=null;lastConfig="";pendingConfig=null;pendingRefresh=false;pendingReread.Clear();writerQueued=false;}
         if(p==null)return;
         ThreadPool.QueueUserWorkItem(_=>{try{if(!p.HasExited){p.Kill();p.WaitForExit(1500);}}catch(InvalidOperationException){}catch(System.ComponentModel.Win32Exception){}finally{p.Dispose();}});
     }
