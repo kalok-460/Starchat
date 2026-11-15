@@ -102,6 +102,43 @@ pub fn same_text(a: &str, b: &str) -> bool {
     ratio(&a, &b) >= 0.80
 }
 
+/// The game font's square brackets are often read as I, 1, t, ) or i
+/// ("[GLOBAL]" -> "IGLOBAL1", "[GLOBAL)"). Without its label a header line is
+/// taken for a continuation of the previous speaker, so bracket look-alikes are
+/// accepted. Returns the line as "[Channel] handle: body", or None.
+/// Mirrors `recover_label` in ocr/geometry.py.
+fn recover_label(text: &str) -> Option<String> {
+    const OPEN: &str = r"[\[\(\{<|IiltTLU!]";
+    const CLOSE: &str = r"[\]\)\}>|Iil1!Y]";
+    const HANDLE: &str = r"([A-Za-z0-9_.-]{1,80})\s*:\s*(.*)$";
+    const CHANNEL: &str = r"(GL[O0]BAL|L[O0]CAL|PARTY|[O0]RGANIZATI[O0]N|[O0]RG)";
+    static SPACED: OnceLock<Regex> = OnceLock::new();
+    static GLUED: OnceLock<Regex> = OnceLock::new();
+    static UNKNOWN: OnceLock<Regex> = OnceLock::new();
+    let name = |raw: &str| {
+        let upper = raw.to_uppercase().replace('0', "O");
+        format!("{}{}", &upper[..1], upper[1..].to_lowercase())
+    };
+    // A known channel name with a bracket (look-alike) on at least one side and a
+    // space after it. A plain "Global chat: ..." body line is left alone.
+    let spaced = SPACED.get_or_init(|| Regex::new(&format!(r"(?i)^\s*(?:{OPEN}{CHANNEL}{CLOSE}?|{CHANNEL}{CLOSE})\s+{HANDLE}")).unwrap());
+    if let Some(c) = spaced.captures(text) {
+        let channel = c.get(1).or(c.get(2)).map_or("", |m| m.as_str());
+        return Some(format!("[{}] {}: {}", name(channel), &c[3], &c[4]));
+    }
+    // Glued to the handle: split only at an unmistakable closing bracket, so the
+    // first letter of a handle is never cut off.
+    let glued = GLUED.get_or_init(|| Regex::new(&format!(r"(?i)^\s*{OPEN}?{CHANNEL}[\]\)\}}>1]{HANDLE}")).unwrap());
+    if let Some(c) = glued.captures(text) {
+        return Some(format!("[{}] {}: {}", name(&c[1]), &c[2], &c[3]));
+    }
+    // Unknown channel (e.g. Korean read as garbage): a real bracket on one side,
+    // or an upper-case word between two bracket look-alikes.
+    let unknown = UNKNOWN.get_or_init(|| Regex::new(&format!(
+        r"^\s*(?:[\[\(\{{][^\s\[\]\(\)\{{\}}]{{0,12}}{CLOSE}?|[^\s\[\]\(\)\{{\}}]{{0,12}}[\]\)\}}]|[IiltTLU|!][A-Z0-9]{{3,12}}[Iil1!Y|])\s+{HANDLE}")).unwrap());
+    unknown.captures(text).map(|c| format!("[] {}: {}", &c[1], &c[2]))
+}
+
 pub fn normalized_text(text: &str) -> String {
     static DETACHED: OnceLock<Regex> = OnceLock::new();
     static ISOLATED: OnceLock<Regex> = OnceLock::new();
@@ -114,6 +151,9 @@ pub fn normalized_text(text: &str) -> String {
     };
     if let Some(c) = header().captures(text) {
         return format(&c);
+    }
+    if let Some(recovered) = recover_label(text) {
+        return recovered;
     }
     if text.starts_with('[') || text.starts_with(']') {
         // The English decoder can lose the closing bracket of a Korean channel.
@@ -163,6 +203,34 @@ mod tests {
         assert_eq!(normalized_text("[IL . Pilot: Hello"), "[IL . Pilot: Hello");
         assert_eq!(normalized_text("IL, Pilot:"), "[] Pilot: ");
         assert_eq!(normalized_text("just a continuation"), "just a continuation");
+    }
+
+    #[test]
+    fn recovers_misread_channel_brackets() {
+        for (read, expected) in [
+            ("IGLOBAL1 Apostle_Z:", "[Global] Apostle_Z: "),
+            ("[GLOBAL1 shadowxx6B: the lob is dope", "[Global] shadowxx6B: the lob is dope"),
+            ("[GLOBAL) Col_Stavrouski:", "[Global] Col_Stavrouski: "),
+            ("tGLOBALi lamSnowww: not a dropship", "[Global] lamSnowww: not a dropship"),
+            ("[GLOBAL1Tsuya_Arcanys: suicide", "[Global] Tsuya_Arcanys: suicide"),
+            ("UGLOBALY Bob: x", "[Global] Bob: x"),
+            ("[GLoBAL1 Bob: x", "[Global] Bob: x"),
+            ("GLOBAL1 Bob: x", "[Global] Bob: x"),
+            ("[GLOBAL IamSnowww: hi", "[Global] IamSnowww: hi"),
+            ("IPARTY1 Medic: on my way", "[Party] Medic: on my way"),
+            ("[22] Ekim420:", "[] Ekim420: "),
+            ("(2) Bo_Nyx: its all the same tbh", "[] Bo_Nyx: its all the same tbh"),
+            ("[Global] Pilot: Hello", "[Global] Pilot: Hello"),
+            // Body lines must stay continuations.
+            ("hmm im stuck in the apartment on new babage and can", "hmm im stuck in the apartment on new babage and can"),
+            ("@meta, they said its mislabled on the website", "@meta, they said its mislabled on the website"),
+            ("I think Bob: is right", "I think Bob: is right"),
+            ("LOL Bob: nice", "LOL Bob: nice"),
+            ("the ratio is 3: 1 here", "the ratio is 3: 1 here"),
+            ("Global chat: is broken", "Global chat: is broken"),
+        ] {
+            assert_eq!(normalized_text(read), expected, "{read}");
+        }
     }
 
     #[test]

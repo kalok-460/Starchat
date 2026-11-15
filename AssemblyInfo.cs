@@ -4,6 +4,6 @@ using System.Reflection;
 [assembly: AssemblyTitle("StarChat")]
 [assembly: AssemblyDescription("Star Citizen chat companion")]
 [assembly: AssemblyProduct("StarChat")]
-[assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.0")]
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.0")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 StarChat contributors")]

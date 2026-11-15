@@ -160,6 +160,14 @@ static class Native {
         await tap(openKey);await delay(300);await enterText();await delay(250);
         if(submit)await tap(Keys.Enter);
     }
+    // 게임은 CapsLock이 켜져 있으면 Shift와 무관하게 대문자로 받는다(Windows처럼 Shift로 뒤집히지 않는다).
+    // 그래서 보내기 전에 CapsLock 자체를 끈다. 끄지 못한 경우에만 BuildTextBatch의 Shift 보정이 쓰인다.
+    internal static bool CapsLockOn{get{return (GetKeyState(0x14)&1)!=0;}}
+    internal static async Task SetCapsLock(bool on){
+        if(CapsLockOn==on)return;
+        Inject(Key(0x14,0,0),Key(0x14,0,2));
+        for(int i=0;i<10&&CapsLockOn!=on;i++)await Task.Delay(20);
+    }
     public static async Task<string> SendGame(IntPtr game,Keys openKey,string text,Keys releaseKey=Keys.Enter,bool submit=true) {
         if(string.IsNullOrWhiteSpace(text))return null;
         text=GameSafeText(text);
@@ -169,6 +177,7 @@ static class Native {
         int trigger=(int)(releaseKey&Keys.KeyCode);
         for(int i=0;i<40;i++) { if((GetAsyncKeyState(0x10)&0x8000)==0&&(GetAsyncKeyState(0x11)&0x8000)==0&&(GetAsyncKeyState(0x12)&0x8000)==0&&(GetAsyncKeyState(0x0D)&0x8000)==0&&(GetAsyncKeyState(trigger)&0x8000)==0)break; await Task.Delay(25); }
         if((GetAsyncKeyState(0x10)&0x8000)!=0||(GetAsyncKeyState(0x11)&0x8000)!=0||(GetAsyncKeyState(0x12)&0x8000)!=0||(GetAsyncKeyState(0x0D)&0x8000)!=0||(GetAsyncKeyState(trigger)&0x8000)!=0)throw new InvalidOperationException(L.T("입력 키를 놓은 뒤 다시 전송하세요."));
+        await SetCapsLock(false);
         FocusGame(game);await Task.Delay(150);EnsureGame(game);
         uint owner;IntPtr layout=GetKeyboardLayout(GetWindowThreadProcessId(game,out owner));
         var batch=BuildTextBatch(text,layout,(GetKeyState(0x14)&1)!=0);

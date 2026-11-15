@@ -601,6 +601,11 @@ static class UiTests {
         Check("review opens input without a final Enter",window.OpenCount==2&&window.EnterCount==1&&window.Submitted==expected);
         Check("scan batch never attempts Ctrl V",window.PasteCount==0&&window.RejectedPasteCount==0);
         Check("send and review never modify clipboard",Native.GetClipboardSequenceNumber()==clipboardSequence);
+        // The game upper-cases everything while CapsLock is on, so sending turns it off first.
+        bool capsBefore=Native.CapsLockOn;await Native.SetCapsLock(true);bool capsWasOn=Native.CapsLockOn;
+        await Native.SendGame(window.Handle,Keys.F6,"Mixed Case text",Keys.Enter,false);await Task.Delay(150);
+        Check("CapsLock is switched off before typing and case is preserved",capsWasOn&&!Native.CapsLockOn&&window.Input.Text.EndsWith("Mixed Case text"),"CapsLock was on="+capsWasOn+", still on="+Native.CapsLockOn+", result: "+window.Input.Text);
+        await Native.SetCapsLock(capsBefore);
         if(batchOnly)return;
         using(var overlay=new Overlay(new Settings{ActivationKey=(int)Keys.F8})){
             overlay.Show();overlay.SetInteractive(true);await Task.Delay(100);

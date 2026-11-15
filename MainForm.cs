@@ -56,7 +56,7 @@ sealed class MainForm : Form {
     readonly HttpClient avatarHttp=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(10)};
     public MainForm(SettingsStore storage,Settings configuration,bool testing) {
         store=storage;settings=configuration;smoke=testing;spectrumEnabledApplied=settings.SpectrumEnabled;log=new OcrLog(settings);spectrum=new Spectrum(store.Root);overlay=new Overlay(settings);spectrumOverlay=new Overlay(settings){IsGame=false,RoomName="Spectrum"};
-        Text=L.T("StarChat 1.0.1 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
+        Text=L.T("StarChat 1.0.2 · 스타 시티즌 채팅 도우미");Font=new Font("맑은 고딕",10);BackColor=Theme.Bg;ForeColor=Theme.Text;
         Icon=AppIcon.Load();
         Size=new Size(1100,760);MinimumSize=new Size(800,580);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;
         var left=new Panel{Dock=DockStyle.Left,Width=340,BackColor=Theme.Side,Padding=new Padding(16)};

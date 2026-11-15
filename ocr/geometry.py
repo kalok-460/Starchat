@@ -49,8 +49,43 @@ def same_text(a,b):
     return SequenceMatcher(None,a,b,autojunk=False).ratio()>=.80
 
 
+# 게임 글꼴의 대괄호는 I, 1, t, ), i 등으로 자주 읽힌다("[GLOBAL]" -> "IGLOBAL1", "[GLOBAL)").
+# 채널 표시를 잃으면 그 줄이 앞 사람 발언의 이어지는 줄로 붙으므로, 괄호처럼 보이는 문자까지 받아 준다.
+_OPEN = r"[\[\(\{<|IiltTLU!]"
+_CLOSE = r"[\]\)\}>|Iil1!Y]"
+_HANDLE = r"([A-Za-z0-9_.-]{1,80})\s*:\s*(.*)$"
+_CHANNEL = r"(GL[O0]BAL|L[O0]CAL|PARTY|[O0]RGANIZATI[O0]N|[O0]RG)"
+# 알려진 채널 이름: 적어도 한쪽에 괄호(로 읽힌 문자)가 있고 뒤에 공백이 있으면 채널 표시다.
+# 괄호 없는 "Global chat: ..." 같은 본문 줄은 건드리지 않는다.
+LABEL_SPACED = re.compile(r"^\s*(?:" + _OPEN + _CHANNEL + _CLOSE + r"?|" + _CHANNEL + _CLOSE + r")\s+" + _HANDLE, re.IGNORECASE)
+# 공백 없이 ID에 붙은 경우는 닫는 괄호가 분명할 때만 나눈다(ID 첫 글자를 잘라내지 않도록).
+LABEL_GLUED = re.compile(r"^\s*" + _OPEN + r"?" + _CHANNEL + r"[\]\)\}>1]" + _HANDLE, re.IGNORECASE)
+# 알 수 없는 채널(한글 등): 한쪽이라도 실제 괄호 문자이거나, 양쪽이 괄호처럼 보이는 대문자 낱말.
+LABEL_UNKNOWN = re.compile(r"^\s*(?:[\[\(\{][^\s\[\]\(\)\{\}]{0,12}" + _CLOSE + r"?|[^\s\[\]\(\)\{\}]{0,12}[\]\)\}]|[IiltTLU|!][A-Z0-9]{3,12}[Iil1!Y|])\s+" + _HANDLE)
+
+
+def recover_label(text):
+    """괄호가 잘못 읽힌 채널 표시를 '[채널] ID: 본문' 꼴로 되돌린다. 해당 없으면 None."""
+    match = LABEL_SPACED.match(text)
+    if match:
+        channel = (match[1] or match[2]).upper().replace("0", "O")
+        return f"[{channel[0]}{channel[1:].lower()}] {match[3]}: {match[4]}"
+    match = LABEL_GLUED.match(text)
+    if match:
+        channel = match[1].upper().replace("0", "O")
+        return f"[{channel[0]}{channel[1:].lower()}] {match[2]}: {match[3]}"
+    match = LABEL_UNKNOWN.match(text)
+    if match:
+        return f"[] {match[1]}: {match[2]}"
+    return None
+
+
 def normalized_text(text):
     header=HEADER.match(text)
+    if not header:
+        recovered=recover_label(text)
+        if recovered is not None:
+            return recovered
     if not header and text.startswith(('[',']')):
         # The English decoder can lose the closing bracket of a Korean
         # channel. Recover a leading handle: boundary, never join it to
