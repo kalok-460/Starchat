@@ -32,6 +32,8 @@ class Settings {
     public Dictionary<string,string> ProviderModels = new Dictionary<string,string>();
     public string Language = "ko", UiLanguage = "ko", LogDirectory = "", Companion = "";
     public List<string> Companions = new List<string>();
+    // 설정 파일이 없는 최초 실행에서만 쓴다: Windows 표시 언어가 한국어면 한국어, 그 밖에는 영어.
+    public static string SystemUiLanguage(System.Globalization.CultureInfo culture=null){return (culture??System.Globalization.CultureInfo.CurrentUICulture).TwoLetterISOLanguageName=="ko"?"ko":"en";}
     public void NormalizeLaunchSettings() {
         UiLanguage=UiLanguage=="en"?"en":"ko";
         if(Companions==null)Companions=new List<string>();
@@ -61,7 +63,7 @@ sealed class SettingsStore {
     static string Unseal(string text) { return string.IsNullOrEmpty(text) ? "" : Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(text), null, DataProtectionScope.CurrentUser)); }
     public Settings Load() {
         string path=Path.Combine(Root,"settings.json");
-        if (!File.Exists(path)) return new Settings { LogDirectory=Path.Combine(Root,"logs") };
+        if (!File.Exists(path)) return new Settings { LogDirectory=Path.Combine(Root,"logs"), UiLanguage=Settings.SystemUiLanguage() };
         var s=Json.New().Deserialize<Settings>(File.ReadAllText(path,Encoding.UTF8));
         s.ApiKey=Unseal(s.ApiKey); s.ClientId=Unseal(s.ClientId);
         foreach(var k in s.ProviderKeys.Keys.ToArray()) s.ProviderKeys[k]=Unseal(s.ProviderKeys[k]);

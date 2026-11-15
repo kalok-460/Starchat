@@ -367,6 +367,8 @@ static class UiTests {
     }
     static void ReleaseFeatureTests(string output){
         var original=new Settings{Companion=Application.ExecutablePath,UiLanguage="invalid"};original.NormalizeLaunchSettings();
+        Check("first-run UI language follows the system: Korean, otherwise English",Settings.SystemUiLanguage(new System.Globalization.CultureInfo("ko-KR"))=="ko"&&Settings.SystemUiLanguage(new System.Globalization.CultureInfo("en-US"))=="en"&&Settings.SystemUiLanguage(new System.Globalization.CultureInfo("ja-JP"))=="en"&&Settings.SystemUiLanguage(new System.Globalization.CultureInfo("de-DE"))=="en");
+        Check("a new profile starts in the system UI language",new SettingsStore(Path.Combine(output,"fresh-profile-"+Guid.NewGuid().ToString("N"))).Load().UiLanguage==Settings.SystemUiLanguage());
         Check("legacy companion migrates without loss",original.Companions.SequenceEqual(new[]{Application.ExecutablePath})&&original.UiLanguage=="ko");
         original.Companions=new List<string>{"a.exe","A.exe","b.exe","c.exe","d.exe"};original.NormalizeLaunchSettings();
         Check("companion paths deduplicated and limited to three",original.Companions.SequenceEqual(new[]{"a.exe","b.exe","c.exe"}));
@@ -379,6 +381,7 @@ static class UiTests {
                 Check("English settings title",form.Text=="StarChat · Settings");
                 var fields=Get<TextBox[]>(form,"companions");Check("three launch selectors preserve migrated paths",fields.Length==3&&fields[2].Text==loaded.Companions[2]);
                 Check("UI language selector is separate from translation",Get<ComboBox>(form,"uiLanguage").SelectedIndex==1&&Get<ComboBox>(form,"language").SelectedIndex==2);
+                Check("UI language options are bilingual in either UI language",Get<ComboBox>(form,"uiLanguage").Items.Cast<object>().Select(Convert.ToString).SequenceEqual(new[]{"한국어 (Korean)","English (영어)"}));
                 fields[1].Text="Z:\\missing-starchat-fixture.exe";Call(form,"SaveSettings");Check("invalid second program blocks save",form.DialogResult!=DialogResult.OK&&loaded.Companions[1]!=fields[1].Text);
                 fields[1].Text=fields[0].Text;fields[2].Text="";Call(form,"SaveSettings");Check("saving cleared companions removes stale paths",loaded.Companions.Count==1&&loaded.Companion==loaded.Companions[0]);
             }
@@ -544,6 +547,11 @@ static class UiTests {
         var batch=Native.BuildTextBatch("Ab!? Zz vV 123",layout,false);int calls=0;
         Native.SendTextBatch(batch,items=>{calls++;Check("one batch contains the full prepared message",ReferenceEquals(items,batch));return (uint)items.Length;});
         Check("body dispatch makes exactly one native call",calls==1);
+        // The game samples Shift per frame: each Shift press/release travels alone, letters stay batched.
+        var parts=Native.SplitAtShift(batch,layout);
+        Check("split parts replay the prepared batch in order",parts.SelectMany(p=>p).Select(k=>k.data.keyboard.scan+":"+k.data.keyboard.flags).SequenceEqual(batch.Select(k=>k.data.keyboard.scan+":"+k.data.keyboard.flags)));
+        Check("every Shift event is isolated and no other part contains Shift",parts.All(p=>p.Length==1&&Native.IsShiftEvent(p[0],layout)||!p.Any(k=>Native.IsShiftEvent(k,layout)))&&parts.Count(p=>p.Length==1&&Native.IsShiftEvent(p[0],layout))==batch.Count(k=>Native.IsShiftEvent(k,layout)));
+        Check("text without shifted characters stays one batch",Native.SplitAtShift(Native.BuildTextBatch("hello world 123",layout,false),layout).Count==1);
         Check("English letters and punctuation use scan codes",batch.All(k=>k.type==1&&k.data.keyboard.vk==0&&(k.data.keyboard.flags&8)!=0));
         foreach(bool caps in new[]{false,true}){
             var upper=Native.BuildTextBatch("A",layout,caps);var lower=Native.BuildTextBatch("a",layout,caps);
@@ -587,7 +595,9 @@ static class UiTests {
         Check("synthetic final Enter delivered once",window.EnterCount==1);
         string printable=new string(Enumerable.Range(32,95).Select(c=>(char)c).ToArray())+" aAazZZ vvV 1122";
         await Native.SendGame(window.Handle,Keys.F6,printable,Keys.Enter,false);await Task.Delay(150);
-        Check("all printable ASCII and repeated keys survive one batch",window.Input.Text==printable,"Synthetic result: "+window.Input.Text);
+        // The game's console key (` and ~) is never typed: ` becomes ' and ~ becomes -.
+        Check("console key characters are replaced for the game",Native.GameSafeText("a`b~c")=="a'b-c"&&Native.GameSafeText("plain text")=="plain text");
+        Check("printable ASCII and repeated keys survive with console keys replaced",window.Input.Text==Native.GameSafeText(printable)&&window.Input.Text.IndexOf('`')<0&&window.Input.Text.IndexOf('~')<0,"Synthetic result: "+window.Input.Text);
         Check("review opens input without a final Enter",window.OpenCount==2&&window.EnterCount==1&&window.Submitted==expected);
         Check("scan batch never attempts Ctrl V",window.PasteCount==0&&window.RejectedPasteCount==0);
         Check("send and review never modify clipboard",Native.GetClipboardSequenceNumber()==clipboardSequence);

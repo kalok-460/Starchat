@@ -57,7 +57,8 @@ namespace StarChat
             CancelButton = cancel;
             Controls.Add(tabs); Controls.Add(footer); Controls.Add(header);
             var general=Page(L.T("일반"));var ocr=Page("OCR");var spectrum=Page(L.T("스펙트럼"));
-            uiLanguage=Combo(new[]{L.T("한국어"),"English"});uiLanguage.SelectedIndex=draft.UiLanguage=="en"?1:0;Row(general,L.T("UI 언어"),uiLanguage);
+            // 현재 UI 언어를 읽지 못하는 사용자도 고를 수 있게 이 항목만 항상 두 언어로 적는다.
+            uiLanguage=Combo(new[]{"한국어 (Korean)","English (영어)"});uiLanguage.SelectedIndex=draft.UiLanguage=="en"?1:0;Row(general,"UI 언어 / UI language",uiLanguage);
             BuildTranslation(general);BuildInput(general);BuildLaunch(general);BuildOcr(ocr);BuildDisplay(spectrum);
         }
 

@@ -1,6 +1,6 @@
 [package]
 name = "starchat-ocr"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "StarChat OCR worker: WGC capture, PP-OCRv6 ONNX inference, layout tracking, motion following"

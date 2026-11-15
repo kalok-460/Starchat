@@ -92,6 +92,8 @@ static class Native {
     internal static void ValidateGameText(string text){
         if(text==null||text.Length>2000||text.Any(char.IsControl))throw new InvalidOperationException(L.T("게임 전송은 제어 문자 없이 2,000자 이하의 한 줄만 지원합니다."));
     }
+    // 게임은 채팅 입력 중에도 ` / ~ 키를 콘솔 열기로 가로챈다. 게임으로 보내는 글에서는 비슷한 문자로 바꾼다.
+    internal static string GameSafeText(string text){return text==null?null:text.Replace((char)96,(char)39).Replace((char)126,(char)45);}
     internal static Input[] BuildTextBatch(string text,IntPtr layout,bool capsLock){
         ValidateGameText(text);
         var events=new List<Input>(text.Length*2+2);bool shiftDown=false;
@@ -109,6 +111,23 @@ static class Native {
         }
         if(shiftDown)events.Add(ScanKey(0x10,true,layout));
         return events.ToArray();
+    }
+    // 게임은 Shift 상태를 입력 이벤트 순서가 아니라 프레임 단위로 읽는다. 본문 전체를 한 번에 넣으면
+    // 문장 첫 대문자를 위한 Shift가 뒤따르는 글자들에도 적용돼 앞부분이 통째로 대문자가 된다.
+    // 그래서 Shift를 누르고 떼는 이벤트만 따로 떼어 앞뒤로 짧게 기다린다. 글자 사이에는 지연이 없다.
+    internal const int ModifierSettleMs=40;
+    internal static bool IsShiftEvent(Input item,IntPtr layout){
+        var k=item.data.keyboard;return k.vk==0&&(k.flags&4)==0&&(k.flags&8)!=0&&k.scan==(ushort)(MapVirtualKeyEx(0x10,4,layout)&255);
+    }
+    internal static List<Input[]> SplitAtShift(Input[] batch,IntPtr layout){
+        var parts=new List<Input[]>();var run=new List<Input>();
+        foreach(var item in batch){
+            if(!IsShiftEvent(item,layout)){run.Add(item);continue;}
+            if(run.Count>0){parts.Add(run.ToArray());run.Clear();}
+            parts.Add(new[]{item});
+        }
+        if(run.Count>0)parts.Add(run.ToArray());
+        return parts;
     }
     static bool SameInputKey(Input a,Input b){
         return a.data.keyboard.vk==b.data.keyboard.vk&&a.data.keyboard.scan==b.data.keyboard.scan&&(a.data.keyboard.flags&~2u)==(b.data.keyboard.flags&~2u);
@@ -143,6 +162,7 @@ static class Native {
     }
     public static async Task<string> SendGame(IntPtr game,Keys openKey,string text,Keys releaseKey=Keys.Enter,bool submit=true) {
         if(string.IsNullOrWhiteSpace(text))return null;
+        text=GameSafeText(text);
         ValidateGameText(text);
         if(!IsWindow(game))throw new InvalidOperationException(L.T("게임 창을 찾지 못했습니다."));
         // 사용자가 누르고 있는 조합 키가 주입 문자열을 게임 단축키로 바꾸지 않도록 키가 올라올 때까지 기다린다.
@@ -152,10 +172,22 @@ static class Native {
         FocusGame(game);await Task.Delay(150);EnsureGame(game);
         uint owner;IntPtr layout=GetKeyboardLayout(GetWindowThreadProcessId(game,out owner));
         var batch=BuildTextBatch(text,layout,(GetKeyState(0x14)&1)!=0);
-        await EnterGameChat(openKey,submit,k=>GameTap(game,k,layout,60),()=>{
+        var parts=SplitAtShift(batch,layout);
+        await EnterGameChat(openKey,submit,k=>GameTap(game,k,layout,60),async()=>{
+            bool shiftHeld=false;
+            try{
+                for(int i=0;i<parts.Count;i++){
+                    if(i>0)await Task.Delay(ModifierSettleMs);
+                    EnsureGame(game);
+                    SendTextBatch(parts[i],events=>SendInput((uint)events.Length,events,Marshal.SizeOf(typeof(Input))));
+                    if(parts[i].Length==1&&IsShiftEvent(parts[i][0],layout))shiftHeld=(parts[i][0].data.keyboard.flags&2)==0;
+                }
+            }catch{
+                // 중간에 멈춰도 우리가 누른 Shift를 남기지 않는다. 본문은 다시 보내지 않는다.
+                if(shiftHeld)try{Inject(ScanKey(0x10,true,layout));}catch(InvalidOperationException){}
+                throw;
+            }
             EnsureGame(game);
-            SendTextBatch(batch,events=>SendInput((uint)events.Length,events,Marshal.SizeOf(typeof(Input))));
-            EnsureGame(game);return Task.FromResult(0);
         },ms=>Task.Delay(ms));
         return null;
     }

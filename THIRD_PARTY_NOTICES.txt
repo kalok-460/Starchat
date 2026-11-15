@@ -1,4 +1,4 @@
-StarChat 1.0.0 - third-party components and assets
+StarChat 1.0.1 - third-party components and assets
 
 StarChat-authored code: Copyright (C) 2026 StarChat contributors.
 License: GNU General Public License version 3 only (GPL-3.0-only), see LICENSE.
